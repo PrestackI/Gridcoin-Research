@@ -171,6 +171,11 @@ inline bool IsProjectV2Enabled(int nHeight)
     return nHeight >= Params().GetConsensus().ProjectV2Height;
 }
 
+inline bool IsPollMultiAddressEnabled(int nHeight)
+{
+    return nHeight >= Params().GetConsensus().PollMultiAddressHeight;
+}
+
 inline bool IsSuperblockV3Enabled(int nHeight)
 {
     // The argument driven override temporarily here to facilitate testing.

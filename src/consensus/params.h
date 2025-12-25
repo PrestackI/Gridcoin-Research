@@ -40,6 +40,8 @@ struct Params {
     int PollV3Height;
     /** Block height at which project v2 contracts are allowed */
     int ProjectV2Height;
+    /** Block height at which poll multi-address eligibility claims are required */
+    int PollMultiAddressHeight;
     /** Block height at which project v4 contracts are allowed */
     int ProjectV4Height;
     /**
