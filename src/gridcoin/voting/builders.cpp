@@ -673,7 +673,7 @@ public:
             total_amount += output.tx->vout[output.i].nValue;
             ++outpoint_count;
             
-            LogPrint(LogFlags::VOTE, 
+            LogPrint(LogFlags::VOTE,
                 "  selected output for address %s: %s GRC (total: %s)",
                 EncodeDestination(*keyId),
                 FormatMoney(output.tx->vout[output.i].nValue),
