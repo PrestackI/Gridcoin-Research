@@ -1089,12 +1089,12 @@ bool PollRegistry::BlockValidate(const ContractContext& ctx, int& DoS) const
     }
     
     // Enforce multi-address claims at PollMultiAddressHeight
-    if (IsPollMultiAddressEnabled(ctx.m_pindex->nHeight) 
+    if (IsPollMultiAddressEnabled(ctx.m_pindex->nHeight)
         && payload->m_claim.m_version < 2) {
         DoS = 25;
-        LogPrint(LogFlags::CONTRACT, 
-            "%s: rejected v1 poll claim after multi-address activation at height %d", 
-            __func__, 
+        LogPrint(LogFlags::CONTRACT,
+            "%s: rejected v1 poll claim after multi-address activation at height %d",
+            __func__,
             ctx.m_pindex->nHeight);
         return false;
     }
