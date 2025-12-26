@@ -219,7 +219,7 @@ install_deps() {
                 add_repo_if_missing "$REPO_32_URL" "$REPO_32_NAME" "MinGW Win32"
                 sudo zypper --gpg-auto-import-keys refresh
             fi
-            
+
             # Pattern Install (with CI-friendly error handling)
             echo "Installing devel_basis pattern..."
             sudo zypper install -y -t pattern devel_basis 2>&1 || {
