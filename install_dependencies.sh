@@ -219,10 +219,12 @@ install_deps() {
                 add_repo_if_missing "$REPO_32_URL" "$REPO_32_NAME" "MinGW Win32"
                 sudo zypper --gpg-auto-import-keys refresh
             fi
-
-            # Pattern Install
+            
+            # Pattern Install (with CI-friendly error handling)
             echo "Installing devel_basis pattern..."
-            sudo zypper install -y -t pattern devel_basis
+            sudo zypper install -y -t pattern devel_basis 2>&1 || {
+                echo "Warning: Pattern installation encountered conflicts. Continuing with individual packages..."
+            }
 
             # Base common packages
             append_base libtool automake autoconf pkg-config python3 cmake git curl ccache doxygen graphviz libzstd-devel
