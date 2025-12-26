@@ -184,7 +184,7 @@ public:
                     return false;
                 }
                 return VerifyAddressClaim(
-                    payload.m_claim.m_balance_claim.m_address_claims[0], 
+                    payload.m_claim.m_balance_claim.m_address_claims[0],
                     message);
             } else {
                 // Version 2+: multiple addresses
