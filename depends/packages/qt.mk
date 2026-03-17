@@ -18,6 +18,7 @@ $(package)_patches += qtbase_platformsupport.patch
 $(package)_patches += qtbase_plugins_cocoa.patch
 $(package)_patches += qtbase_skip_tools.patch
 $(package)_patches += rcc_hardcode_timestamp.patch
+$(package)_patches += qtdeclarative_skip_svgtoqml.patch
 
 $(package)_qttranslations_file_name=$(qt_details_qttranslations_file_name)
 $(package)_qttranslations_sha256_hash=$(qt_details_qttranslations_sha256_hash)
@@ -130,6 +131,8 @@ $(package)_config_opts += -no-feature-androiddeployqt
 $(package)_config_opts += -no-feature-macdeployqt
 $(package)_config_opts += -no-feature-qmake
 $(package)_config_opts += -no-feature-windeployqt
+$(package)_config_opts += -no-feature-qml-profiler
+$(package)_config_opts += -no-feature-qml-preview
 
 ifeq ($(host),$(build))
 # Qt Tools module.
@@ -286,7 +289,8 @@ define $(package)_preprocess_cmds
   patch -p1 -i $($(package)_patch_dir)/qtbase_platformsupport.patch && \
   patch -p1 -i $($(package)_patch_dir)/qtbase_plugins_cocoa.patch && \
   patch -p1 -i $($(package)_patch_dir)/qtbase_skip_tools.patch && \
-  patch -p1 -i $($(package)_patch_dir)/rcc_hardcode_timestamp.patch
+  patch -p1 -i $($(package)_patch_dir)/rcc_hardcode_timestamp.patch && \
+  patch -p1 -i $($(package)_patch_dir)/qtdeclarative_skip_svgtoqml.patch
 endef
 
 define $(package)_config_cmds

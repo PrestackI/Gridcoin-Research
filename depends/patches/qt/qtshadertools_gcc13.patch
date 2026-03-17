@@ -1,0 +1,10 @@
+--- a/qtshadertools/src/3rdparty/glslang/SPIRV/SpvBuilder.h
++++ b/qtshadertools/src/3rdparty/glslang/SPIRV/SpvBuilder.h
+@@ -60,6 +60,7 @@
+ }
+ 
+ #include <algorithm>
++#include <cstdint>
+ #include <map>
+ #include <memory>
+ #include <set>
