@@ -8,7 +8,6 @@ $(package)_patches_path := $(qt_details_patches_path)
 $(package)_patches := dont_hardcode_pwd.patch
 $(package)_patches += qtbase_skip_tools.patch
 $(package)_patches += rcc_hardcode_timestamp.patch
-$(package)_patches += qtshadertools_gcc13.patch
 $(package)_patches += qtdeclarative_skip_svgtoqml.patch
 
 $(package)_qttranslations_file_name=$(qt_details_qttranslations_file_name)
@@ -158,7 +157,6 @@ define $(package)_preprocess_cmds
   patch -p1 -i $($(package)_patch_dir)/dont_hardcode_pwd.patch && \
   patch -p1 -i $($(package)_patch_dir)/qtbase_skip_tools.patch && \
   patch -p1 -i $($(package)_patch_dir)/rcc_hardcode_timestamp.patch && \
-  patch -p1 -i $($(package)_patch_dir)/qtshadertools_gcc13.patch && \
   patch -p1 -i $($(package)_patch_dir)/qtdeclarative_skip_svgtoqml.patch
 endef
 
