@@ -105,7 +105,24 @@ BOOST_AUTO_TEST_SUITE_END()
 #pragma clang diagnostic ignored "-Wthread-safety-analysis"
 #endif
 
-BOOST_AUTO_TEST_SUITE(gridcoin_cbr_tests)
+namespace {
+//! Resets the process-global protocol registry around every case in this
+//! suite. An entry that outlives a case is visible to every suite that runs
+//! later: an ACTIVE "blockreward1" entry moves the constant block reward, and
+//! GetConstantBlockReward is read by the miner through the previous block and
+//! by validation through the block being connected, so a block mined by a
+//! later suite is rejected as claiming more than it is owed. Which suites run
+//! before which depends on link order, so a leak here surfaces on one
+//! platform build and not another.
+struct ProtocolRegistryReset
+{
+    ProtocolRegistryReset() { GRC::GetProtocolRegistry().Reset(); }
+    ~ProtocolRegistryReset() { GRC::GetProtocolRegistry().Reset(); }
+};
+} // anonymous namespace
+
+BOOST_AUTO_TEST_SUITE(gridcoin_cbr_tests,
+                      *boost::unit_test::fixture<ProtocolRegistryReset>())
 
 BOOST_AUTO_TEST_CASE(gridcoin_DefaultCBRShouldBe10PreV13)
 {

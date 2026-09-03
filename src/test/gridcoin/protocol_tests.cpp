@@ -94,9 +94,20 @@ void DeleteProtocolEntry(const uint32_t& payload_version, const std::string& key
     registry.Add({contract, ctx_tx, &dummy_index});
 }
 
+//! Resets the process-global protocol registry around every case in this
+//! suite, so entries a case adds are not visible to whatever suite runs next.
+//! Which suites run before which depends on link order, so a leak here
+//! surfaces on one platform build and not another.
+struct ProtocolRegistryReset
+{
+    ProtocolRegistryReset() { GRC::GetProtocolRegistry().Reset(); }
+    ~ProtocolRegistryReset() { GRC::GetProtocolRegistry().Reset(); }
+};
+
 } // anonymous namespace
 
-BOOST_AUTO_TEST_SUITE(protocol_tests)
+BOOST_AUTO_TEST_SUITE(protocol_tests,
+                      *boost::unit_test::fixture<ProtocolRegistryReset>())
 
 // Note for these tests we are going to mix payload version 1 and 2 entries to make
 // sure they act equivalently.
