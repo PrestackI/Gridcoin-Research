@@ -15,6 +15,8 @@ add_executable(test_gridcoin
     accounting_tests.cpp
     chain_setup.cpp
     miner_block_assembly_tests.cpp
+    # SetBestChain's trust-regression revert leg, driven on the fixture chain.
+    chainman_reorg_tests.cpp
     addressbook_tests.cpp
     addrman_tests.cpp
     allocator_tests.cpp
