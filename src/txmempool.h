@@ -201,7 +201,12 @@ public:
     bool addUnchecked(const uint256& hash, const CTxMemPoolEntry& entry);
     bool remove(const CTransaction &tx, bool fRecursive = false,
                 MemPoolRemovalReason reason = MemPoolRemovalReason::UNKNOWN);
-    bool removeConflicts(const CTransaction &tx);
+    //! Remove the pooled transactions that spend an input of \p tx.
+    //! \p removed_out, when given, collects the hashes removed at the top
+    //! level. Descendants go with them through remove()'s recursion and are
+    //! not reported: a caller that re-offers a parent gets the children back
+    //! through the ordinary rebroadcast path once the parent is pooled again.
+    bool removeConflicts(const CTransaction &tx, std::vector<uint256>* removed_out = nullptr);
     void clear();
     void queryHashes(std::vector<uint256>& vtxid);
 

@@ -199,6 +199,10 @@ BASE_SCRIPTS = [
     # disconnected returns to the mempool and stays unconfirmed, not
     # conflicted, and is mined again by the next block.
     'feature_reorg_resurrect.py',
+    # feature_reorg_conflicted.py: a wallet transaction conflicted by a block
+    # stops being conflicted when that block is disconnected, provided whatever
+    # took its outpoint went with the block.
+    'feature_reorg_conflicted.py',
 ]
 
 # Place EXTENDED_SCRIPTS first since longer tests benefit from being scheduled
