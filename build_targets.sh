@@ -509,7 +509,8 @@ if [[ "$TARGET" == "all" || "$TARGET" == "native" ]] && [[ "$(uname -s)" == "Lin
 
         # Test
         print_pre_test_environment
-        ctest --test-dir build -j $CORES --output-on-failure
+        # PROBE (fork only, never upstream): stream the functional suite live so a stall shows which test it is in.
+        PYTHONUNBUFFERED=1 ctest --test-dir build -j $CORES --output-on-failure -V
 
         # Write state file (Only if build and test succeeded)
         write_build_state "build"
