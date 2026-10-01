@@ -1411,13 +1411,13 @@ bool ChangeSettings(const std::vector<std::pair<std::string, std::string>>& sett
         const bool sensitive = echo_flags && (*echo_flags & ArgsManager::SENSITIVE);
         const std::string param = name + "=" + (sensitive ? "****" : value);
 
-        // An empty value erases the setting; a null SettingsValue removes the key
-        // from gridcoinsettings.json.
-        if (!updateRwSetting(name, value.empty() ? util::SettingsValue() : util::SettingsValue(value))) {
-            error_out = "Error storing setting in read-write settings file: " + name;
-            return false;
-        }
-
+        // Apply the change to the running args before storing it.
+        // updateRwSetting() emits RwSettingsUpdated synchronously, before it
+        // writes the file, and a listener may read the setting during that
+        // emission (the side-stake registry reloads its keys there). It reads
+        // through GetArg(), where a forced value outranks the read-write
+        // settings. So the running value has to be the new one before the
+        // store, or the listener reads the value an earlier change forced.
         if (value_changed) {
             if (value.empty()) {
                 // Erasing must also drop any value forced into the running args,
@@ -1438,7 +1438,16 @@ bool ChangeSettings(const std::vector<std::pair<std::string, std::string>>& sett
             } else {
                 gArgs.ForceSetArg(name, value);
             }
+        }
 
+        // An empty value erases the setting; a null SettingsValue removes the key
+        // from gridcoinsettings.json.
+        if (!updateRwSetting(name, value.empty() ? util::SettingsValue() : util::SettingsValue(value))) {
+            error_out = "Error storing setting in read-write settings file: " + name;
+            return false;
+        }
+
+        if (value_changed) {
             if (immediate_effect) {
                 ApplyRwSettingSideEffect(name);
                 immediate_out.push_back(param);
