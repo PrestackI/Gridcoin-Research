@@ -121,9 +121,10 @@ jobs:
           echo "Extended scripts: $scripts"
           echo "scripts=$scripts" >> "$GITHUB_OUTPUT"
 
-      # Gating. --attempts only retries the known transient daemon RPC-startup
-      # signature. The GRIDCOIND / GRIDCOINCLI overrides are the ones the
-      # `functional_tests` CTest case supplies; the daemon doubles as the CLI.
+      # Gating. --attempts only retries the transient signatures listed in
+      # test_runner.py's RETRY_SIGNATURES. The GRIDCOIND / GRIDCOINCLI overrides
+      # are the ones the `functional_tests` CTest case supplies; the daemon
+      # doubles as the CLI.
       - name: Run the extended scripts
         env:
           GRIDCOIND: ${{ github.workspace }}/build/bin/gridcoinresearchd
@@ -132,7 +133,7 @@ jobs:
           python3 test/functional/test_runner.py
           "--configfile=${{ github.workspace }}/build/test/config.ini"
           ${{ steps.extended.outputs.scripts }}
-          --ci --quiet --combinedlogslen=4000 --attempts=3
+          --ci --combinedlogslen=4000 --attempts=3
 
       # On failure, keep the per-node datadirs (each holds <chain>/debug.log) so an
       # intermittent flake -- which often vanishes on the next run -- leaves a

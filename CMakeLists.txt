@@ -919,12 +919,15 @@ if(ENABLE_TESTS AND ENABLE_DAEMON)
         # under wine on a Linux host). Cross builds still get config.ini and the
         # check-functional target, just not the auto-run ctest case.
         if(NOT CMAKE_CROSSCOMPILING)
+            # ctest prints this case's output only when it fails or times out,
+            # unless it runs with -V (the Sanitizers job does); --quiet hid the
+            # per-script lines exactly when they were needed.
             add_test(
                 NAME functional_tests
                 COMMAND ${Python3_EXECUTABLE}
                         "${CMAKE_SOURCE_DIR}/test/functional/test_runner.py"
                         "--configfile=${CMAKE_BINARY_DIR}/test/config.ini"
-                        --ci --quiet --combinedlogslen=4000 --attempts=3
+                        --ci --combinedlogslen=4000 --attempts=3
             )
             set_tests_properties(functional_tests PROPERTIES
                 ENVIRONMENT "${_functional_env}"
