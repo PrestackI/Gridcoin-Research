@@ -261,6 +261,11 @@ NON_SCRIPTS = [
 ]
 
 def main():
+    # Under ctest, stdout is a pipe, so Python block-buffers it. When ctest
+    # kills the run at its timeout, the buffer is discarded, taking every
+    # line printed since the last flush. Line buffering keeps each one.
+    sys.stdout.reconfigure(line_buffering=True)
+
     # Parse arguments and pass through unrecognised args
     parser = argparse.ArgumentParser(add_help=False,
                                      usage='%(prog)s [test_runner.py options] [script options] [scripts]',
@@ -276,7 +281,7 @@ def main():
     parser.add_argument('--extended', action='store_true', help='run the extended test suite in addition to the basic tests')
     parser.add_argument('--help', '-h', '-?', action='store_true', help='print help text and exit')
     parser.add_argument('--jobs', '-j', type=int, default=4, help='how many test scripts to run in parallel. Default=4.')
-    parser.add_argument('--attempts', '-a', type=int, default=1, help='how many times to run a script that fails with the known transient daemon RPC-startup signature before marking it failed. Default=1 (no retry). ONLY failures matching that signature are retried -- assertion/logic/build/sync failures are never retried, so real regressions are not masked as flaky.')
+    parser.add_argument('--attempts', '-a', type=int, default=1, help='how many times to run a script that fails with one of the transient signatures listed in RETRY_SIGNATURES before marking it failed. Default=1 (no retry). ONLY failures matching that signature are retried -- assertion/logic/build/sync failures are never retried, so real regressions are not masked as flaky.')
     parser.add_argument('--keepcache', '-k', action='store_true', help='the default behavior is to flush the cache directory on startup. --keepcache retains the cache from the previous testrun.')
     parser.add_argument('--quiet', '-q', action='store_true', help='only print dots, results summary and failure logs')
     parser.add_argument('--tmpdirprefix', '-t', default=tempfile.gettempdir(), help="Root directory for datadirs")
@@ -430,6 +435,23 @@ RETRY_SIGNATURES = (
     "Failed to listen on any port",
 )
 
+def retry_signature_line(output):
+    """Return the last line of output that contains a RETRY_SIGNATURES entry,
+    stripped and cut to 300 characters, or None when no line does.
+
+    The last match, not the first: in a traceback the rendered exception line
+    follows the source line it quotes, and an earlier match can be that quoted
+    source line, with {} placeholders instead of values. That is always so for
+    "not true after" (the single-line raise in wait_until_helper) and, on
+    Python 3.13 and later, also for "Unable to connect" (the multi-line raise
+    in TestNode.wait_for_rpc_connection, whose middle line 3.13 prints).
+    """
+    match = None
+    for line in output.splitlines():
+        if any(sig in line for sig in RETRY_SIGNATURES):
+            match = line
+    return match.strip()[:300] if match is not None else None
+
 def run_tests(*, test_list, src_dir, build_dir, tmpdir, jobs=1, enable_coverage=False, args=None, combined_logs_len=0, failfast=False, attempts=1, use_term_control):
     args = args or []
 
@@ -502,14 +524,15 @@ def run_tests(*, test_list, src_dir, build_dir, tmpdir, jobs=1, enable_coverage=
         test_result, testdir, stdout, stderr = job_queue.get_next()
 
         # Retry only the known transient slow-node flakes, never a real failure.
+        matched = retry_signature_line(stdout + stderr) if test_result.status == "Failed" else None
         if (test_result.status == "Failed" and attempts > 1
                 and retries_used.get(test_result.name, 0) < (attempts - 1)
-                and any(sig in (stdout + stderr) for sig in RETRY_SIGNATURES)):
+                and matched is not None):
             n = retries_used.get(test_result.name, 0) + 1
             retries_used[test_result.name] = n
             retried.add(test_result.name)
-            print("%s[RETRY %d/%d]%s %s failed with the transient RPC-startup signature; re-running" % (
-                BOLD[1], n, attempts - 1, BOLD[0], test_result.name))
+            print("%s[RETRY %d/%d]%s %s failed after %d s with a retryable signature; re-running. Matched: %s" % (
+                BOLD[1], n, attempts - 1, BOLD[0], test_result.name, test_result.time, matched))
             # Re-enqueue the script (test_count += 1 schedules the extra run) AND
             # advance i: this branch has already consumed one get_next() result, and
             # the loop is `while i < test_count`. Bumping only test_count would leave
@@ -638,6 +661,7 @@ class TestHandler:
             log_stderr = tempfile.SpooledTemporaryFile(max_size=2**16)
             test_argv = test.split()
             testdir = "{}/{}_{}".format(self.tmpdir, re.sub(".py$", "", test_argv[0]), portseed)
+            logging.debug("Started %s in %s" % (test, testdir))
             tmpdir_arg = ["--tmpdir={}".format(testdir)]
             self.jobs.append((test,
                               time.time(),
