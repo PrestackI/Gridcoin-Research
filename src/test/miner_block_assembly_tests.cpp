@@ -2629,6 +2629,147 @@ BOOST_AUTO_TEST_CASE(an_own_send_in_the_mempool_still_counts_toward_the_staking_
     BOOST_CHECK_EQUAL(StakingBalance(), before - coin_value + (coin_value - fee));
 }
 
+//!
+//! An inactive coinbase or coinstake is valid only in its own block, which a reorganization back to it checks again,
+//! so the resend pass passes over it rather than revalidating it as a loose transaction. Each transaction planted here
+//! carries a malformed beacon payload that revalidation refuses, so a pass that revalidated one would erase it: the
+//! inactive coinstake and coinbase must stay, and a coinstake that is not inactive is still revalidated and erased.
+//!
+BOOST_AUTO_TEST_CASE(the_resend_pass_passes_over_inactive_coinbases_and_coinstakes)
+{
+    mempool.clear();
+
+    struct ClearPool {
+        ~ClearPool() { mempool.clear(); }
+    } clear_pool;
+
+    std::vector<std::pair<uint256, ChangeType>> seen;
+    boost::signals2::scoped_connection watch = pwalletMain->NotifyTransactionChanged.connect(
+        [&seen](CWallet*, const uint256& hash, ChangeType status) { seen.emplace_back(hash, status); });
+
+    // Restores the VERBOSE category and removes the callback on every exit path.
+    struct SummaryCapture {
+        std::vector<std::string> lines;
+        const bool was_enabled{LogInstance().WillLogCategory(BCLog::LogFlags::VERBOSE)};
+        std::list<std::function<void(const std::string&)>>::iterator it{
+            LogInstance().PushBackCallback([this](const std::string& s) {
+                if (s.find("ResendWalletTransactions: ") != std::string::npos
+                    && s.find(" transactions relayed") != std::string::npos) {
+                    lines.push_back(s);
+                }
+            })};
+        ~SummaryCapture()
+        {
+            LogInstance().DeleteCallback(it);
+            if (was_enabled) LogInstance().EnableCategory(BCLog::LogFlags::VERBOSE);
+            else LogInstance().DisableCategory(BCLog::LogFlags::VERBOSE);
+        }
+    } capture;
+
+    const GRC::Contract contract = GRC::MakeContract<GRC::BeaconPayload>(GRC::ContractAction::ADD);
+
+    const auto coinstake_with_contract = [&](const COutPoint& coin) {
+        CMutableTransaction mtx(grc_test::CreateCoinstakeShaped(PremineCoinbase(), coin.n, 10000));
+        mtx.vContracts.push_back(contract);
+        const CTransaction tx(mtx);
+        BOOST_REQUIRE(tx.IsCoinStake());
+        return tx;
+    };
+
+    LOCK(cs_main);
+
+    const std::string leaked = DescribeRelayableCandidates();
+    BOOST_REQUIRE_MESSAGE(leaked.empty(), "relayable candidates left by a sibling case: " << leaked);
+
+    std::vector<COutPoint> free_coins;
+    {
+        LOCK(pwalletMain->cs_wallet);
+
+        // Nothing inactive of this kind is in the wallet yet, so the summary must count exactly the two below.
+        for (const auto& item : pwalletMain->mapWallet) {
+            const CWalletTx& wtx = item.second;
+            BOOST_REQUIRE_MESSAGE(!(wtx.state<TxStateInactive>() && (wtx.IsCoinBase() || wtx.IsCoinStake())),
+                                  "an inactive coinbase or coinstake is already in the wallet: " << item.first.GetHex());
+        }
+
+        for (const COutPoint& coin : SpendablePremineOutputs()) {
+            if (!OwnOutputSpent(coin.hash, coin.n)) free_coins.push_back(coin);
+        }
+        BOOST_REQUIRE_GE(free_coins.size(), 2u);
+    }
+
+    const CTransaction coinstake = coinstake_with_contract(free_coins[0]);
+    const CTransaction pooled_coinstake = coinstake_with_contract(free_coins[1]);
+
+    const CTransaction coinbase = [&] {
+        CMutableTransaction mtx;
+        mtx.nTime = static_cast<unsigned int>(grc_test::FixtureTxTime());
+        mtx.vin.resize(1);
+        mtx.vin[0].prevout.SetNull();
+        mtx.vin[0].scriptSig = CScript() << 1 << 2;
+        mtx.vout.emplace_back(1 * COIN, grc_test::PremineScript());
+        mtx.vContracts.push_back(contract);
+        return CTransaction(mtx);
+    }();
+    BOOST_REQUIRE(coinbase.IsCoinBase());
+
+    struct EraseOnExit {
+        uint256 hash;
+        ~EraseOnExit() { pwalletMain->EraseFromWallet(hash); }
+    };
+
+    const PlantedSpend planted_coinstake{coinstake.GetHash(), free_coins[0]};
+    const PlantedSpend planted_pooled_coinstake{pooled_coinstake.GetHash(), free_coins[1]};
+    const EraseOnExit erase_coinbase{coinbase.GetHash()};
+
+    {
+        LOCK(pwalletMain->cs_wallet);
+
+        CWalletDB walletdb(pwalletMain->strWalletFile);
+        CTxDB txdb("r");
+
+        // Inactive, at depth -1, and refused by revalidation.
+        for (const CTransaction& tx : {coinstake, coinbase}) {
+            CWalletTx wtx(pwalletMain, tx);
+            wtx.fFromMe = true;
+            wtx.SetTxState(TxStateInactive{false});
+            BOOST_REQUIRE(pwalletMain->AddToWallet(wtx, &walletdb));
+
+            CWalletTx& stored = pwalletMain->mapWallet.at(tx.GetHash());
+            BOOST_REQUIRE_EQUAL(stored.GetDepthInMainChain(), -1);
+            BOOST_REQUIRE(stored.RevalidateTransaction(txdb) == CWalletTx::RevalidateResult::INVALID);
+        }
+
+        // Tagged in-mempool but not pooled: at depth -1 and refused by revalidation too, but not inactive.
+        CWalletTx wtx(pwalletMain, pooled_coinstake);
+        wtx.fFromMe = true;
+        wtx.SetTxState(TxStateInMempool{});
+        BOOST_REQUIRE(pwalletMain->AddToWallet(wtx, &walletdb));
+
+        CWalletTx& stored = pwalletMain->mapWallet.at(pooled_coinstake.GetHash());
+        BOOST_REQUIRE(!stored.state<TxStateInactive>());
+        BOOST_REQUIRE_EQUAL(stored.GetDepthInMainChain(), -1);
+        BOOST_REQUIRE(stored.RevalidateTransaction(txdb) == CWalletTx::RevalidateResult::INVALID);
+    }
+
+    LogInstance().EnableCategory(BCLog::LogFlags::VERBOSE);
+    const size_t seen_before = seen.size();
+    BOOST_CHECK_EQUAL(pwalletMain->ResendWalletTransactions(/*fForce=*/true), 0u);
+
+    BOOST_CHECK(InWallet(coinstake.GetHash()));
+    BOOST_CHECK(InWallet(coinbase.GetHash()));
+    BOOST_CHECK_EQUAL(CountNotices(seen, seen_before, coinstake.GetHash(), CT_DELETED), 0);
+    BOOST_CHECK_EQUAL(CountNotices(seen, seen_before, coinbase.GetHash(), CT_DELETED), 0);
+
+    BOOST_CHECK(!InWallet(pooled_coinstake.GetHash()));
+    BOOST_CHECK_EQUAL(CountNotices(seen, seen_before, pooled_coinstake.GetHash(), CT_DELETED), 1);
+
+    BOOST_REQUIRE_EQUAL(capture.lines.size(), 1u);
+    BOOST_CHECK_MESSAGE(capture.lines[0].find(" 2 inactive coinbase or coinstake transactions passed over")
+                            != std::string::npos,
+                        capture.lines[0]);
+}
+
 BOOST_AUTO_TEST_CASE(kernel_detail_is_logged_only_under_the_miner_category)
 {
     // Restores the MINER category and removes the callback on every exit path.
