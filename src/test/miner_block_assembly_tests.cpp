@@ -45,6 +45,7 @@
 #include "init.h"
 #include "miner.h"
 #include "node/blockstorage.h"
+#include "node/chainman.h"
 #include "policy/fees.h"
 #include "primitives/block.h"
 #include "primitives/transaction.h"
@@ -2408,6 +2409,224 @@ BOOST_AUTO_TEST_CASE(stake_weight_is_the_value_of_the_stake_candidates)
     }
 
     BOOST_CHECK_EQUAL(GRC::GetStakeWeight(*pwalletMain), value);
+}
+
+namespace {
+
+//! The balance SelectCoinsForStaking compares the reserve with, which the miner's efficiency report also uses.
+int64_t StakingBalance()
+{
+    LOCK2(cs_main, pwalletMain->cs_wallet);
+
+    std::vector<StakeCandidate> candidates;
+    GRC::MinerStatus::ErrorFlags error_flag = GRC::MinerStatus::NONE;
+    int64_t balance = 0;
+    pwalletMain->SelectCoinsForStaking(GetAdjustedTime(), candidates, error_flag, balance);
+
+    return balance;
+}
+
+//! Reorganize to \p hash with the wallet registered for the validation signals, so it hears each disconnect from
+//! inside DisconnectBlock and each connect from inside ConnectBlock, as a node's wallet does.
+void ReorganizeWithTheWallet(const uint256& hash)
+{
+    const SignalsForThisCase signals;
+    BOOST_REQUIRE(ForceReorganizeToHash(hash));
+
+    LOCK(cs_main);
+    BOOST_REQUIRE(pindexBest->GetBlockHash() == hash);
+}
+
+//! A premine output the wallet does not mark spent: an earlier case may have planted a spend of one.
+COutPoint UnspentPremineOutput()
+{
+    for (const COutPoint& coin : SpendablePremineOutputs()) {
+        if (!OwnOutputSpent(coin.hash, coin.n)) return coin;
+    }
+
+    BOOST_FAIL("no premine output left that the wallet does not mark spent");
+    return COutPoint();
+}
+
+//! Takes a planted wallet entry out again, with the spent mark it put on its input, however the case exits.
+struct PlantedSpend {
+    uint256 hash;
+    COutPoint input;
+    ~PlantedSpend()
+    {
+        LOCK2(cs_main, pwalletMain->cs_wallet);
+        pwalletMain->EraseFromWallet(hash);
+
+        const auto it = pwalletMain->mapWallet.find(input.hash);
+        if (it != pwalletMain->mapWallet.end()) it->second.MarkUnspent(input.n);
+    }
+};
+
+} // anonymous namespace
+
+//!
+//! An own coinstake orphaned the way a node orphans one: a block mined through the fixture, then a reorganization to
+//! its parent. Its outputs cannot be spent unless a reorganization connects its block again, and the output it staked
+//! is unspent again and counts through its own transaction, so the orphan must add nothing to the staking balance.
+//!
+//! One block serves every check, because each mined block stakes a premine output that other cases need. The case
+//! ends at the parent, where the per-case wallet scope erases the orphan and frees that output again.
+//!
+BOOST_AUTO_TEST_CASE(an_orphaned_own_coinstake_adds_nothing_to_the_staking_balance)
+{
+    mempool.clear();
+
+    const int64_t balance_before_stake = StakingBalance();
+
+    CBlock block;
+    std::string err;
+    BOOST_REQUIRE_MESSAGE(grc_test::CreateAndProcessBlock(block, err), "could not mine: " << err);
+    BOOST_REQUIRE(block.vtx.size() > 1 && block.vtx[1].IsCoinStake());
+
+    const CTransaction& coinstake = block.vtx[1];
+    const COutPoint kernel = coinstake.vin[0].prevout;
+    const uint256 block_hash = block.GetHash(true);
+    const int64_t balance_with_stake = StakingBalance();
+
+    uint256 parent;
+    {
+        LOCK(cs_main);
+        parent = mapBlockIndex.at(block_hash)->pprev->GetBlockHash();
+    }
+
+    ReorganizeWithTheWallet(parent);
+
+    {
+        LOCK2(cs_main, pwalletMain->cs_wallet);
+
+        // What the reorganization leaves: the coinstake inactive at depth -1 and recorded as from us, and the output
+        // it staked unspent again.
+        const CWalletTx& wtx = pwalletMain->mapWallet.at(coinstake.GetHash());
+        BOOST_REQUIRE(wtx.state<TxStateInactive>());
+        BOOST_REQUIRE_EQUAL(wtx.GetDepthInMainChain(), -1);
+        BOOST_REQUIRE(wtx.fFromMe);
+        BOOST_REQUIRE(!OwnOutputSpent(kernel.hash, kernel.n));
+    }
+
+    BOOST_CHECK_EQUAL(StakingBalance(), balance_before_stake);
+
+    // A reserve of every coin the wallet holds leaves nothing to stake, whatever the orphan's outputs come to.
+    {
+        struct ReserveRestorer {
+            int64_t saved{nReserveBalance};
+            ~ReserveRestorer() { nReserveBalance = saved; }
+        } restore_reserve;
+
+        LOCK2(cs_main, pwalletMain->cs_wallet);
+        nReserveBalance = balance_before_stake;
+
+        std::vector<StakeCandidate> candidates;
+        GRC::MinerStatus::ErrorFlags error_flag = GRC::MinerStatus::NONE;
+        int64_t balance = 0;
+        BOOST_CHECK(!pwalletMain->SelectCoinsForStaking(GetAdjustedTime(), candidates, error_flag, balance));
+        BOOST_CHECK_EQUAL(balance, balance_before_stake);
+        BOOST_CHECK(candidates.empty());
+        BOOST_CHECK_EQUAL(GRC::GetStakeWeight(*pwalletMain), 0u);
+    }
+
+    // Another stake may spend the output the orphan staked once the orphan's block is off the chain. The staked
+    // value then counts once, through the new stake, which pays the fee out of it. The new stake is recorded as
+    // confirmed in the tip, which does not hold it, so it is taken out again before the chain moves.
+    {
+        LOCK2(cs_main, pwalletMain->cs_wallet);
+
+        const CAmount fee = 1 * COIN;
+        const CTransaction restake = grc_test::CreateCoinstakeShaped(pwalletMain->mapWallet.at(kernel.hash), kernel.n,
+                                                                     fee);
+        CWalletTx wtx(pwalletMain, restake);
+        wtx.fFromMe = true;
+        wtx.SetTxState(TxStateConfirmed{pindexBest->GetBlockHash(), 1});
+
+        const PlantedSpend planted{restake.GetHash(), kernel};
+        CWalletDB walletdb(pwalletMain->strWalletFile);
+        BOOST_REQUIRE(pwalletMain->AddToWallet(wtx, &walletdb));
+        BOOST_REQUIRE(OwnOutputSpent(kernel.hash, kernel.n));
+
+        BOOST_CHECK_EQUAL(StakingBalance(), balance_before_stake - fee);
+    }
+
+    // A reorganization back to its block is the one way it returns, and its outputs count again then.
+    ReorganizeWithTheWallet(block_hash);
+    {
+        LOCK2(cs_main, pwalletMain->cs_wallet);
+        BOOST_REQUIRE(pwalletMain->mapWallet.at(coinstake.GetHash()).isConfirmed());
+    }
+    BOOST_CHECK_EQUAL(StakingBalance(), balance_with_stake);
+
+    ReorganizeWithTheWallet(parent);
+}
+
+BOOST_AUTO_TEST_CASE(an_inactive_own_send_adds_nothing_to_the_staking_balance)
+{
+    mempool.clear();
+
+    LOCK2(cs_main, pwalletMain->cs_wallet);
+
+    const COutPoint coin = UnspentPremineOutput();
+    const CAmount coin_value = PremineCoinbase().vout[coin.n].nValue;
+    const int64_t before = StakingBalance();
+
+    // A send of ours that another spend of the same coin conflicted out: the coin is spent, and the send's outputs
+    // never will be. AreDependenciesConfirmed() refuses a transaction at depth -1, so they do not count.
+    const CTransaction send = CreateSpend(PremineCoinbase(), coin.n, 150000);
+    CWalletTx wtx(pwalletMain, send);
+    wtx.fFromMe = true;
+    wtx.SetTxState(TxStateInactive{false});
+
+    const PlantedSpend planted{send.GetHash(), coin};
+    CWalletDB walletdb(pwalletMain->strWalletFile);
+    BOOST_REQUIRE(pwalletMain->AddToWallet(wtx, &walletdb));
+
+    const CWalletTx& stored = pwalletMain->mapWallet.at(send.GetHash());
+    BOOST_REQUIRE_EQUAL(stored.GetDepthInMainChain(), -1);
+    BOOST_REQUIRE(!stored.AreDependenciesConfirmed());
+    BOOST_REQUIRE(OwnOutputSpent(coin.hash, coin.n));
+
+    BOOST_CHECK_EQUAL(StakingBalance(), before - coin_value);
+}
+
+BOOST_AUTO_TEST_CASE(an_own_send_in_the_mempool_still_counts_toward_the_staking_balance)
+{
+    mempool.clear();
+
+    LOCK2(cs_main, pwalletMain->cs_wallet);
+
+    const COutPoint coin = UnspentPremineOutput();
+    const CAmount coin_value = PremineCoinbase().vout[coin.n].nValue;
+    const CAmount fee = 150000;
+    const int64_t before = StakingBalance();
+
+    // Its output pays us, and its input is confirmed, so the change counts while it waits for a block. It carries
+    // its parent, as CreateTransaction gives every send, which is what AreDependenciesConfirmed() reads.
+    const CTransaction send = CreateSpend(PremineCoinbase(), coin.n, fee);
+    CWalletTx wtx(pwalletMain, send);
+    wtx.fFromMe = true;
+    wtx.SetTxState(TxStateInMempool{});
+    {
+        CTxDB txdb("r");
+        wtx.AddSupportingTransactions(txdb);
+    }
+
+    const PlantedSpend planted{send.GetHash(), coin};
+    struct ClearPool {
+        ~ClearPool() { mempool.clear(); }
+    } clear_pool;
+
+    CWalletDB walletdb(pwalletMain->strWalletFile);
+    BOOST_REQUIRE(pwalletMain->AddToWallet(wtx, &walletdb));
+    grc_test::AddToMempool(send, fee);
+
+    const CWalletTx& stored = pwalletMain->mapWallet.at(send.GetHash());
+    BOOST_REQUIRE_EQUAL(stored.GetDepthInMainChain(), 0);
+    BOOST_REQUIRE(stored.AreDependenciesConfirmed());
+    BOOST_REQUIRE(OwnOutputSpent(coin.hash, coin.n));
+
+    BOOST_CHECK_EQUAL(StakingBalance(), before - coin_value + (coin_value - fee));
 }
 
 BOOST_AUTO_TEST_CASE(kernel_detail_is_logged_only_under_the_miner_category)

@@ -3526,7 +3526,13 @@ void CWallet::AvailableCoinsForStaking(vector<StakeCandidate>& vCoins, unsigned 
             // calculation here, to include recently staked amounts. The number here should be equal or very close to
             // the "Total" field on the GUI overview screen. This is the proper number to use to be able to do the
             // efficiency calculations.
-            if (!(nDepth > 0 || (pcoin->fFromMe && (pcoin->AreDependenciesConfirmed() || pcoin->IsCoinStake())))) continue;
+            //
+            // A transaction outside the main chain counts only from the mempool: AreDependenciesConfirmed() refuses
+            // one at depth -1. AcceptToMemoryPool refuses a coinstake, so one at depth -1 is outside the main chain,
+            // normally because its block was orphaned. Its outputs cannot be spent unless a reorganization connects
+            // that block again, and once the block is disconnected the output it staked counts through its own
+            // transaction.
+            if (!(nDepth > 0 || (pcoin->fFromMe && pcoin->AreDependenciesConfirmed()))) continue;
 
             for (const unsigned int i : possible_outputs)
             {
