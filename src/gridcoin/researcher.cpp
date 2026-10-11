@@ -62,8 +62,10 @@ std::atomic<bool> g_researcher_dirty(true);
 //! \brief Change non-cruncher mode and set the email address directive in the
 //! read-write JSON settings file
 //!
-//! \param email The email address to update the directive to. If empty, set
-//! the configuration to non-cruncher mode.
+//! \param mode  The mode to store. Every mode sets investor, email and
+//! noncruncher, except that NONCRUNCHER erases email.
+//! \param email The email address to store for SOLO mode. Not used for the
+//! other modes.
 //!
 //! On a successful write, it also clears any value forced for the keys it wrote.
 //!
@@ -89,6 +91,14 @@ bool UpdateRWSettingsForMode(const ResearcherMode mode, const std::string& email
         settings.push_back(std::make_pair("noncruncher", "1"));
     } else if (mode == ResearcherMode::SOLO) {
         settings.push_back(std::make_pair("email", util::SettingsValue(email)));
+        settings.push_back(std::make_pair("noncruncher", "0"));
+    } else if (mode == ResearcherMode::POOL) {
+        // Store what ChangeMode() forces for a pool, an empty email and
+        // noncruncher=0, so a restart reads the same mode. Unwritten, the
+        // email or noncruncher=1 of an earlier mode applied again at the next
+        // restart. The email is stored empty rather than erased for the same
+        // reason as investor above: erased, a config-file email would apply.
+        settings.push_back(std::make_pair("email", ""));
         settings.push_back(std::make_pair("noncruncher", "0"));
     }
 

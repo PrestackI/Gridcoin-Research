@@ -992,7 +992,7 @@ BOOST_FIXTURE_TEST_CASE(a_pool_mode_change_outranks_a_config_file_investor_flag,
     BOOST_REQUIRE_EQUAL(Rw("investor"), "<absent>");
     BOOST_REQUIRE(GRC::Researcher::ConfiguredForNoncruncherMode());
     BOOST_REQUIRE(GRC::Researcher::Email().empty());
-    // POOL writes neither key; the restart half below reads the baseline.
+    // No mode change has written either key yet.
     BOOST_REQUIRE_EQUAL(Rw("email"), "<absent>");
     BOOST_REQUIRE_EQUAL(Rw("noncruncher"), "<absent>");
 
@@ -1013,6 +1013,70 @@ BOOST_FIXTURE_TEST_CASE(a_pool_mode_change_outranks_a_config_file_investor_flag,
 
     BOOST_CHECK_EQUAL(Rw("investor"), "0");
     BOOST_CHECK(!GRC::Researcher::ConfiguredForNoncruncherMode());
+}
+
+BOOST_FIXTURE_TEST_CASE(a_pool_mode_change_after_noncruncher_mode_survives_a_restart, ResearcherModeChangeFixture)
+{
+    // What a switch to non-cruncher mode leaves in the read-write settings.
+    BOOST_REQUIRE(GRC::Researcher::Get()->ChangeMode(GRC::ResearcherMode::NONCRUNCHER, std::string()));
+    BOOST_REQUIRE_EQUAL(Rw("noncruncher"), "1");
+    BOOST_REQUIRE(GRC::Researcher::ConfiguredForNoncruncherMode());
+
+    BOOST_REQUIRE(GRC::Researcher::Get()->ChangeMode(GRC::ResearcherMode::POOL, std::string()));
+    BOOST_CHECK(!GRC::Researcher::ConfiguredForNoncruncherMode());
+
+    // Model a restart started the same way: forced values do not survive one,
+    // and the read-write settings come from the file.
+    gArgs.ClearForcedArg("-investor");
+    gArgs.ClearForcedArg("-email");
+    gArgs.ClearForcedArg("-noncruncher");
+    BOOST_REQUIRE(gArgs.ReadSettingsFile());
+
+    BOOST_CHECK_EQUAL(Rw("noncruncher"), "0");
+    BOOST_CHECK(!GRC::Researcher::ConfiguredForNoncruncherMode());
+}
+
+BOOST_FIXTURE_TEST_CASE(a_pool_mode_change_after_solo_mode_survives_a_restart, ResearcherModeChangeFixture)
+{
+    // What a switch to solo mode leaves in the read-write settings.
+    BOOST_REQUIRE(GRC::Researcher::Get()->ChangeMode(GRC::ResearcherMode::SOLO, m_email));
+    BOOST_REQUIRE_EQUAL(Rw("email"), m_email);
+
+    BOOST_REQUIRE(GRC::Researcher::Get()->ChangeMode(GRC::ResearcherMode::POOL, std::string()));
+    BOOST_CHECK(GRC::Researcher::Email().empty());
+
+    // Model a restart, as in the case above.
+    gArgs.ClearForcedArg("-investor");
+    gArgs.ClearForcedArg("-email");
+    gArgs.ClearForcedArg("-noncruncher");
+    BOOST_REQUIRE(gArgs.ReadSettingsFile());
+
+    BOOST_CHECK_EQUAL(Rw("email"), "");
+    BOOST_CHECK(GRC::Researcher::Email().empty());
+    BOOST_CHECK(!GRC::Researcher::ConfiguredForNoncruncherMode());
+}
+
+BOOST_FIXTURE_TEST_CASE(a_pool_mode_change_outranks_a_config_file_email, ResearcherModeChangeFixture)
+{
+    // A pool mode change stores an empty email rather than erasing the key:
+    // erased, a config-file email would apply again after a restart.
+    SetConfigFileValue("email", m_email);
+    // The fixture forces an empty email, which would outrank the config file.
+    gArgs.ClearForcedArg("-email");
+    BOOST_REQUIRE_EQUAL(Rw("email"), "<absent>");
+    BOOST_REQUIRE_EQUAL(GRC::Researcher::Email(), m_email);
+
+    BOOST_REQUIRE(GRC::Researcher::Get()->ChangeMode(GRC::ResearcherMode::POOL, std::string()));
+    BOOST_CHECK(GRC::Researcher::Email().empty());
+
+    // Model a restart, as in the cases above.
+    gArgs.ClearForcedArg("-investor");
+    gArgs.ClearForcedArg("-email");
+    gArgs.ClearForcedArg("-noncruncher");
+    BOOST_REQUIRE(gArgs.ReadSettingsFile());
+
+    BOOST_CHECK_EQUAL(Rw("email"), "");
+    BOOST_CHECK(GRC::Researcher::Email().empty());
 }
 
 BOOST_FIXTURE_TEST_CASE(a_mode_change_keeps_a_changesettings_override_of_a_config_file_investor_flag, ResearcherModeChangeFixture)
