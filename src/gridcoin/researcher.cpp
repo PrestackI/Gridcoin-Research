@@ -19,6 +19,7 @@
 #include "span.h"
 #include "node/ui_interface.h"
 #include "util.h"
+#include "util/rwsettings.h"
 
 #include <boost/algorithm/string/case_conv.hpp>
 #include <boost/algorithm/string/join.hpp>
@@ -59,21 +60,26 @@ ResearcherPtr g_researcher = std::make_shared<Researcher>();
 std::atomic<bool> g_researcher_dirty(true);
 
 //!
-//! \brief Change non-cruncher mode and set the email address directive in the
-//! read-write JSON settings file
+//! \brief Store a researcher mode in the read-write JSON settings file and
+//! apply it to the running args, in one step.
 //!
 //! \param mode  The mode to store. Every mode sets investor, email and
 //! noncruncher, except that NONCRUNCHER erases email.
-//! \param email The email address to store for SOLO mode. Not used for the
-//! other modes.
+//! \param email The email address to store for SOLO mode; the settings file
+//! does not take it for the other modes. It is the forced -email value for
+//! every mode.
 //!
-//! On a successful write, it also clears any value forced for the keys it wrote.
+//! The read-write values, the forced values and the settings file write happen
+//! under one hold of the settings lock (updateRwSettingsAndForcedArgs()). A
+//! changesettings of one of these keys therefore lands wholly before or wholly
+//! after the mode change, and the mode change never undoes part of it. On a
+//! failed write every read-write and forced value is restored.
 //!
 //! \return \c false if an error occurs during the update.
 //!
 bool UpdateRWSettingsForMode(const ResearcherMode mode, const std::string& email)
 {
-    std::vector<std::pair<std::string, util::SettingsValue>> settings;
+    using Forced = RwSettingUpdate::Forced;
 
     // Store the legacy investor key as "0" rather than erasing it. Email()
     // and ConfiguredForNoncruncherMode() still read -investor, and the
@@ -84,45 +90,36 @@ bool UpdateRWSettingsForMode(const ResearcherMode mode, const std::string& email
     // Every mode change now leaves this key in the settings file, so the
     // deprecated -investor registration cannot be removed until this line
     // erases the key again.
-    settings.push_back(std::make_pair("investor", "0"));
+    //
+    // Its forced value is cleared. A changesettings investor=1 forced its value
+    // into the running args, where it outranks the read-write settings, and left
+    // in place it would keep Email() and ConfiguredForNoncruncherMode() in
+    // non-cruncher mode for the rest of the session, whatever mode was chosen.
+    // Cleared rather than forced to "0", the running args read what a restart
+    // would read, so a command-line -investor still outranks the settings file.
+    const RwSettingUpdate investor{"investor", "0", Forced::CLEAR, {}};
 
-    if (mode == ResearcherMode::NONCRUNCHER) {
-        settings.push_back(std::make_pair("email", util::SettingsValue(UniValue::VNULL)));
-        settings.push_back(std::make_pair("noncruncher", "1"));
-    } else if (mode == ResearcherMode::SOLO) {
-        settings.push_back(std::make_pair("email", util::SettingsValue(email)));
-        settings.push_back(std::make_pair("noncruncher", "0"));
+    // The email and noncruncher values in the settings file are what a restart
+    // reads, and their forced values are what this session reads straight away:
+    // the chosen email and the mode's noncruncher flag. NONCRUNCHER erases the
+    // email from the file. POOL stores it empty, with noncruncher=0, so a restart
+    // reads the same mode: unwritten, the email or noncruncher=1 of an earlier
+    // mode applied again at the next restart. The pool email is stored empty
+    // rather than erased for the same reason as investor above: erased, a
+    // config-file email would apply.
+    util::SettingsValue stored_email;
+    if (mode == ResearcherMode::SOLO) {
+        stored_email = email;
     } else if (mode == ResearcherMode::POOL) {
-        // Store what ChangeMode() forces for a pool, an empty email and
-        // noncruncher=0, so a restart reads the same mode. Unwritten, the
-        // email or noncruncher=1 of an earlier mode applied again at the next
-        // restart. The email is stored empty rather than erased for the same
-        // reason as investor above: erased, a config-file email would apply.
-        settings.push_back(std::make_pair("email", ""));
-        settings.push_back(std::make_pair("noncruncher", "0"));
+        stored_email = "";
     }
+    const std::string noncruncher = mode == ResearcherMode::NONCRUNCHER ? "1" : "0";
 
-    if (!::updateRwSettings(settings)) {
-        return false;
-    }
-
-    // The write succeeded, so the read-write settings now hold the chosen
-    // mode. A changesettings of any of these keys forced its value into the
-    // running args, and a forced value outranks the read-write settings. Left
-    // in place, a forced legacy investor flag keeps Email() and
-    // ConfiguredForNoncruncherMode() in non-cruncher mode for the rest of the
-    // session, whatever mode was chosen. Clear them, so the running args read
-    // what a restart would read. ChangeMode() forces email and noncruncher
-    // again as soon as this returns. On a failed write nothing is cleared:
-    // ChangeMode() returns before it forces or reloads anything, and every
-    // forced value stays as it was. A value given on the command line is not a
-    // forced value, so it still outranks the settings file, as it does after a
-    // restart.
-    for (const auto& setting : settings) {
-        gArgs.ClearForcedArg("-" + setting.first);
-    }
-
-    return true;
+    return ::updateRwSettingsAndForcedArgs({
+        investor,
+        {"email", stored_email, Forced::SET, email},
+        {"noncruncher", noncruncher, Forced::SET, noncruncher},
+    });
 }
 
 //!
@@ -1605,12 +1602,10 @@ bool Researcher::ChangeMode(const ResearcherMode mode, std::string email)
         return true;
     }
 
+    // Stores the mode and applies it to the running args in one step.
     if (!UpdateRWSettingsForMode(mode, email)) {
         return false;
     }
-
-    gArgs.ForceSetArg("-email", email);
-    gArgs.ForceSetArg("-noncruncher", mode == ResearcherMode::NONCRUNCHER ? "1" : "0");
 
     {
         LOCK(cs_main);

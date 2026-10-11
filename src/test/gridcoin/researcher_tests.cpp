@@ -9,6 +9,7 @@
 #include "gridcoin/pool.h"
 #include "gridcoin/project.h"
 #include "gridcoin/researcher.h"
+#include "node/ui_interface.h"
 #include "util.h"
 
 #include <boost/algorithm/string/predicate.hpp>
@@ -1095,6 +1096,52 @@ BOOST_FIXTURE_TEST_CASE(a_mode_change_keeps_a_changesettings_override_of_a_confi
 
     BOOST_CHECK_EQUAL(GRC::Researcher::Email(), m_email);
     BOOST_CHECK(!GRC::Researcher::ConfiguredForNoncruncherMode());
+}
+
+//!
+//! \brief A changesettings that lands inside a mode change, after its settings
+//! write, must keep the value it stored, in the read-write settings and in the
+//! running args alike. The listener runs inside the mode change's
+//! RwSettingsUpdated emission, which is the point where another writer could
+//! get in: it stores the key as changesettings does, applied to the running
+//! args in the same step. The mode change must not touch the key after that.
+//!
+BOOST_FIXTURE_TEST_CASE(a_changesettings_email_during_a_mode_change_keeps_its_value, ResearcherModeChangeFixture)
+{
+    const std::string other{"other@example.com"};
+    bool stored = false;
+    boost::signals2::scoped_connection conn{uiInterface.RwSettingsUpdated_connect([&] {
+        if (stored) return; // the listener's own write emits again
+        stored = true;
+        BOOST_CHECK(updateRwSetting("email", util::SettingsValue{other}, /*apply_to_running_args=*/true));
+    })};
+
+    BOOST_REQUIRE(GRC::Researcher::Get()->ChangeMode(GRC::ResearcherMode::SOLO, m_email));
+    conn.disconnect();
+
+    BOOST_REQUIRE(stored);
+    BOOST_CHECK_EQUAL(Rw("email"), other);
+    BOOST_CHECK_EQUAL(Forced("email"), other);
+    BOOST_CHECK_EQUAL(GRC::Researcher::Email(), other);
+}
+
+//! The same for the legacy investor flag, whose forced value the mode change clears.
+BOOST_FIXTURE_TEST_CASE(a_changesettings_investor_during_a_mode_change_keeps_its_value, ResearcherModeChangeFixture)
+{
+    bool stored = false;
+    boost::signals2::scoped_connection conn{uiInterface.RwSettingsUpdated_connect([&] {
+        if (stored) return; // the listener's own write emits again
+        stored = true;
+        BOOST_CHECK(updateRwSetting("investor", util::SettingsValue{"1"}, /*apply_to_running_args=*/true));
+    })};
+
+    BOOST_REQUIRE(GRC::Researcher::Get()->ChangeMode(GRC::ResearcherMode::SOLO, m_email));
+    conn.disconnect();
+
+    BOOST_REQUIRE(stored);
+    BOOST_CHECK_EQUAL(Rw("investor"), "1");
+    BOOST_CHECK_EQUAL(Forced("investor"), "1");
+    BOOST_CHECK(GRC::Researcher::ConfiguredForNoncruncherMode());
 }
 
 BOOST_FIXTURE_TEST_CASE(a_failed_mode_change_leaves_a_config_investor_flag_in_force, ResearcherModeChangeFixture)
