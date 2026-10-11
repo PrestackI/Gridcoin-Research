@@ -228,9 +228,9 @@ uint64_t GRC::GetStakeWeight(const CWallet& wallet)
     LOCK2(cs_main, wallet.cs_wallet);
 
     // SelectCoinsForStaking returns false when there is nothing to stake: no coins, no mature coins, or a balance the
-    // reserve covers. Its reserve check uses the staking balance, which also counts own coinstake outputs that are not
-    // in the main chain. Its candidates are confirmed main-chain outputs that pass the miner's own maturity and age
-    // filters, so they need no further checks here.
+    // reserve covers. Its reserve check uses the staking balance, which also counts immature stake outputs and
+    // receipts with fewer than ten confirmations, both of which GetBalance() leaves out. Its candidates are confirmed
+    // main-chain outputs that pass the miner's own maturity and age filters, so they need no further checks here.
     if (!wallet.SelectCoinsForStaking(GetAdjustedTime(), coins, unused, balance)) {
         return 0;
     }
