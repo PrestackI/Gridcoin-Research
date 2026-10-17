@@ -17,12 +17,15 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 //! Fakes of the interfaces the GUI models read, so a test can build the real
@@ -426,6 +429,296 @@ public:
     {
         return interfaces::MakeCleanupHandler([] {});
     }
+};
+
+//! A FakeWallet whose lock state, passphrase, unlock calls and send results
+//! are scripted, and which logs every call of the six methods the unlock,
+//! restore and send paths make (with the calling thread), so a test can check
+//! which calls were made, in which order and on which thread. Every member can
+//! be used from a test thread while another thread calls the fake. A call can
+//! be held at its start on a FakeLatch, and each of the six methods can be
+//! scripted to throw.
+class ScriptedWallet : public FakeWallet
+{
+public:
+    enum class Method { GetLockState, UnlockWallet, ElevateWallet, LockWallet, RestrictToStakingOnly, SendCoins, Op };
+
+    //! One logged call. The passphrase, its capacity and the staking flag are
+    //! set for unlockWallet and elevateWallet; the recipients, the coin control
+    //! and the accepted fee for sendCoins.
+    struct Call {
+        Method method;
+        std::thread::id thread;
+        bool staking_only{false};
+        std::size_t capacity{0};
+        std::string passphrase;
+        std::vector<interfaces::WalletSendRecipient> recipients;
+        std::optional<interfaces::WalletCoinControl> coin_control;
+        int64_t accepted_fee{0};
+    };
+
+    //! What a method with a throw switch set throws, after logging.
+    enum class ThrowKind { None, Runtime, NonStd };
+
+    // Optional latches, waited on when set: getLockState at its start,
+    // unlockWallet after logging, sendCoins from the call m_send_latch_from on
+    // (zero-based).
+    std::atomic<FakeLatch*> m_read_latch{nullptr};
+    std::atomic<FakeLatch*> m_unlock_latch{nullptr};
+    std::atomic<FakeLatch*> m_send_latch{nullptr};
+    std::atomic<int> m_send_latch_from{0};
+
+    //! Logs an Op entry with the calling thread: a test's posted operation
+    //! calls it, so the log shows where the operation ran among the wallet
+    //! calls.
+    void recordOp()
+    {
+        Call call{};
+        call.method = Method::Op;
+        call.thread = std::this_thread::get_id();
+        Log(std::move(call));
+    }
+
+    //! Every call so far, in order.
+    std::vector<Call> log() const
+    {
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        return m_log;
+    }
+    int lockStateCalls() const { return Count(Method::GetLockState); }
+    int unlockCalls() const { return Count(Method::UnlockWallet); }
+    int elevateCalls() const { return Count(Method::ElevateWallet); }
+    int lockCalls() const { return Count(Method::LockWallet); }
+    int restrictCalls() const { return Count(Method::RestrictToStakingOnly); }
+    int sendCalls() const { return Count(Method::SendCoins); }
+    int opCalls() const { return Count(Method::Op); }
+
+    //! Sets the lock state (crypted, locked, unlocked for staking only).
+    void setLockState(bool crypted, bool locked, bool staking_only)
+    {
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        m_lock_state = interfaces::WalletLockState{};
+        m_lock_state.crypted = crypted;
+        m_lock_state.locked = locked;
+        m_lock_state.unlocked_for_staking_only = staking_only;
+    }
+    interfaces::WalletLockState lockState() const
+    {
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        return m_lock_state;
+    }
+    //! After the next getLockState, the state becomes `next`; that read
+    //! itself returns the state before the change.
+    void flipAfterNextRead(interfaces::WalletLockState next)
+    {
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        m_flip = next;
+    }
+
+    void setPassphrase(std::string passphrase)
+    {
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        m_passphrase = std::move(passphrase);
+    }
+    std::string passphrase() const
+    {
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        return m_passphrase;
+    }
+
+    //! A scripted result makes restrictToStakingOnly return it and leave the
+    //! state alone; std::nullopt restores the unscripted behaviour.
+    void scriptRestrict(std::optional<bool> result)
+    {
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        m_restrict_result = result;
+    }
+
+    //! The results the next sendCoins calls return, in order.
+    void scriptSend(std::vector<interfaces::SendCoinsResult> results)
+    {
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        m_send_results.assign(results.begin(), results.end());
+    }
+
+    //! Makes `method` throw after logging: a std::runtime_error carrying
+    //! `text`, or a non-standard exception. ThrowKind::None clears it.
+    void setThrow(Method method, ThrowKind kind, std::string text = {})
+    {
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        m_throws[method] = std::make_pair(kind, std::move(text));
+    }
+
+    //! Logs, waits on the read latch, reads the state, then applies a
+    //! one-shot change set by flipAfterNextRead. It does not call
+    //! FakeWallet::getLockState.
+    interfaces::WalletLockState getLockState() override
+    {
+        Call call{};
+        call.method = Method::GetLockState;
+        call.thread = std::this_thread::get_id();
+        Log(std::move(call));
+        if (FakeLatch* latch = m_read_latch.load()) latch->wait();
+        MaybeThrow(Method::GetLockState);
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        const interfaces::WalletLockState state = m_lock_state;
+        if (m_flip) {
+            m_lock_state = *m_flip;
+            m_flip.reset();
+        }
+        return state;
+    }
+
+    //! The right passphrase without staking_only unlocks fully; with
+    //! staking_only it leaves the state alone and returns whether the
+    //! passphrase is right; a wrong one returns false.
+    bool unlockWallet(const SecureString& passphrase, bool staking_only) override
+    {
+        Call call{};
+        call.method = Method::UnlockWallet;
+        call.thread = std::this_thread::get_id();
+        call.staking_only = staking_only;
+        call.capacity = passphrase.capacity();
+        call.passphrase.assign(passphrase.begin(), passphrase.end());
+        const std::string given = call.passphrase;
+        Log(std::move(call));
+        if (FakeLatch* latch = m_unlock_latch.load()) latch->wait();
+        MaybeThrow(Method::UnlockWallet);
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        const bool right = given == m_passphrase;
+        if (!right) return false;
+        if (staking_only) return true;
+        m_lock_state.crypted = true;
+        m_lock_state.locked = false;
+        m_lock_state.unlocked_for_staking_only = false;
+        return true;
+    }
+
+    //! Widens a staking-only unlock given the right passphrase; false on a
+    //! locked wallet and in every other case.
+    bool elevateWallet(const SecureString& passphrase) override
+    {
+        Call call{};
+        call.method = Method::ElevateWallet;
+        call.thread = std::this_thread::get_id();
+        call.capacity = passphrase.capacity();
+        call.passphrase.assign(passphrase.begin(), passphrase.end());
+        const std::string given = call.passphrase;
+        Log(std::move(call));
+        MaybeThrow(Method::ElevateWallet);
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        const bool staking_only =
+            m_lock_state.crypted && !m_lock_state.locked && m_lock_state.unlocked_for_staking_only;
+        if (!staking_only || given != m_passphrase) return false;
+        m_lock_state.unlocked_for_staking_only = false;
+        return true;
+    }
+
+    //! Locks a crypted wallet (true); an unencrypted one is left alone
+    //! (false). It does not call the FakeWallet base.
+    bool lockWallet() override
+    {
+        Call call{};
+        call.method = Method::LockWallet;
+        call.thread = std::this_thread::get_id();
+        Log(std::move(call));
+        MaybeThrow(Method::LockWallet);
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        if (!m_lock_state.crypted) return false;
+        m_lock_state.locked = true;
+        m_lock_state.unlocked_for_staking_only = false;
+        return true;
+    }
+
+    //! A scripted result is returned as it is; unscripted, a fully unlocked
+    //! wallet is narrowed to staking only (true), and anything else is false.
+    bool restrictToStakingOnly() override
+    {
+        Call call{};
+        call.method = Method::RestrictToStakingOnly;
+        call.thread = std::this_thread::get_id();
+        Log(std::move(call));
+        MaybeThrow(Method::RestrictToStakingOnly);
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        if (m_restrict_result) return *m_restrict_result;
+        const bool full = m_lock_state.crypted && !m_lock_state.locked && !m_lock_state.unlocked_for_staking_only;
+        if (!full) return false;
+        m_lock_state.unlocked_for_staking_only = true;
+        return true;
+    }
+
+    //! Returns the next scripted result; past the end of the script, a default
+    //! SendCoinsResult (TransactionCreationFailed).
+    interfaces::SendCoinsResult sendCoins(const std::vector<interfaces::WalletSendRecipient>& recipients,
+                                          const std::optional<interfaces::WalletCoinControl>& coin_control,
+                                          int64_t accepted_fee) override
+    {
+        Call call{};
+        call.method = Method::SendCoins;
+        call.thread = std::this_thread::get_id();
+        call.recipients = recipients;
+        call.coin_control = coin_control;
+        call.accepted_fee = accepted_fee;
+        const int index = Log(std::move(call));
+        FakeLatch* latch = m_send_latch.load();
+        if (latch && index >= m_send_latch_from.load()) latch->wait();
+        MaybeThrow(Method::SendCoins);
+        std::lock_guard<std::mutex> lock(m_state_mutex);
+        if (m_send_results.empty()) return interfaces::SendCoinsResult{};
+        interfaces::SendCoinsResult result = m_send_results.front();
+        m_send_results.pop_front();
+        return result;
+    }
+
+private:
+    //! Appends `call` to the log and returns how many calls of its method came
+    //! before it. The log lock is released before the caller waits on a latch.
+    int Log(Call call)
+    {
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        int before = 0;
+        for (const Call& logged : m_log) {
+            if (logged.method == call.method) ++before;
+        }
+        m_log.push_back(std::move(call));
+        return before;
+    }
+
+    int Count(Method method) const
+    {
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        int count = 0;
+        for (const Call& logged : m_log) {
+            if (logged.method == method) ++count;
+        }
+        return count;
+    }
+
+    void MaybeThrow(Method method)
+    {
+        ThrowKind kind = ThrowKind::None;
+        std::string text;
+        {
+            std::lock_guard<std::mutex> lock(m_state_mutex);
+            const auto it = m_throws.find(method);
+            if (it == m_throws.end()) return;
+            kind = it->second.first;
+            text = it->second.second;
+        }
+        if (kind == ThrowKind::Runtime) throw std::runtime_error(text);
+        if (kind == ThrowKind::NonStd) throw 1;
+    }
+
+    mutable std::mutex m_log_mutex;
+    std::vector<Call> m_log;
+
+    //! Guards FakeWallet::m_lock_state and every scripted value below.
+    mutable std::mutex m_state_mutex;
+    std::optional<interfaces::WalletLockState> m_flip;
+    std::string m_passphrase;
+    std::optional<bool> m_restrict_result;
+    std::deque<interfaces::SendCoinsResult> m_send_results;
+    std::map<Method, std::pair<ThrowKind, std::string>> m_throws;
 };
 
 } // namespace qt_test
