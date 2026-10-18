@@ -87,6 +87,7 @@ add_library(gridcoinqt STATIC
     sendcoinsdialog.cpp
     syncoverlay.cpp
     sendcoinsentry.cpp
+    sendfeenegotiator.cpp
     sidestaketablemodel.cpp
     signverifymessagedialog.cpp
     splashscreen.cpp

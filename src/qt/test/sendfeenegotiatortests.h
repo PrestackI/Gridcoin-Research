@@ -15,7 +15,8 @@
 
 //! The send dialog's fee-confirmation loop: a real SendCoinsDialog over a real
 //! WalletModel and a scripted wallet, with its message boxes answered by a
-//! script. Each test reads the attempts the wallet saw and the boxes shown.
+//! script, and SendFeeNegotiator driven directly. Each test reads the attempts
+//! the wallet saw and the boxes shown, or the steps the negotiator returned.
 class SendFeeNegotiatorTests : public QObject
 {
     Q_OBJECT
@@ -29,6 +30,8 @@ private Q_SLOTS:
     void sendDialogFeeLoopCharacterization();
     void sendDialogFeeInBalanceText();
     void sendDialogCoinControlEveryAttempt();
+
+    void sendFeeNegotiator();
 
 private:
     // Suite-wide QSettings redirect (see initTestCase) and what it replaced.

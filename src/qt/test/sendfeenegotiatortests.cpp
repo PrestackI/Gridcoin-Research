@@ -13,6 +13,7 @@
 #include "qt/optionsmodel.h"
 #include "qt/sendcoinsdialog.h"
 #include "qt/sendcoinsentry.h"
+#include "qt/sendfeenegotiator.h"
 #include "qt/test/interfacefakes.h"
 #include "qt/test/modelfakes.h"
 #include "qt/walletmodel.h"
@@ -476,5 +477,104 @@ void SendFeeNegotiatorTests::sendDialogCoinControlEveryAttempt()
         QCOMPARE(sends, 2);
         QCOMPARE(boxes.unanswered(), 0);
         QCOMPARE(boxes.leftover(), 0);
+    }
+}
+
+namespace {
+
+//! What one send driven through a SendFeeNegotiator saw: the fee passed to
+//! each attempt, the fees asked for and the final step.
+struct NegotiatedSend {
+    std::vector<qint64> fees_passed;
+    std::vector<qint64> fees_asked;
+    SendFeeNegotiator::Step done;
+};
+
+//! Drives one send as the send dialog does: each attempt returns the next of
+//! `results` (TransactionCreationFailed past the end), and each fee question
+//! is answered with the next of `answers` (no past the end).
+NegotiatedSend Negotiate(const std::vector<WalletModel::SendCoinsReturn>& results, const std::vector<bool>& answers)
+{
+    NegotiatedSend send;
+    SendFeeNegotiator negotiator;
+    std::size_t next_result = 0;
+    std::size_t next_answer = 0;
+    for (int guard = 0; guard < 100; ++guard) {
+        send.fees_passed.push_back(negotiator.acceptedFee());
+        const WalletModel::SendCoinsReturn result = next_result < results.size()
+                                                        ? results[next_result++]
+                                                        : WalletModel::SendCoinsReturn(WalletModel::TransactionCreationFailed);
+        SendFeeNegotiator::Step step = negotiator.onResult(result);
+        if (step.kind == SendFeeNegotiator::Step::Confirm) {
+            send.fees_asked.push_back(step.fee);
+            const bool yes = next_answer < answers.size() && answers[next_answer++];
+            step = negotiator.onAnswer(yes);
+        }
+        if (step.kind == SendFeeNegotiator::Step::Done) {
+            send.done = step;
+            break;
+        }
+    }
+    return send;
+}
+
+WalletModel::SendCoinsReturn FeeRequired(qint64 fee)
+{
+    return WalletModel::SendCoinsReturn(WalletModel::FeeConfirmationRequired, fee);
+}
+
+} // namespace
+
+void SendFeeNegotiatorTests::sendFeeNegotiator()
+{
+    // A fee asked for and accepted: the next attempt carries it.
+    {
+        const NegotiatedSend send = Negotiate({FeeRequired(FEE), WalletModel::SendCoinsReturn(WalletModel::OK, 0, "aa")},
+                                              {true});
+        QCOMPARE(send.fees_passed, (std::vector<qint64>{0, FEE}));
+        QCOMPARE(send.fees_asked, (std::vector<qint64>{FEE}));
+        QCOMPARE(send.done.kind, SendFeeNegotiator::Step::Done);
+        QCOMPARE(send.done.result.status, WalletModel::OK);
+        QCOMPARE(send.done.result.hex, QStringLiteral("aa"));
+    }
+
+    // A fee declined: the send ends as Aborted after that attempt.
+    {
+        const NegotiatedSend send = Negotiate({FeeRequired(FEE)}, {false});
+        QCOMPARE(send.fees_passed.size(), size_t{1});
+        QCOMPARE(send.done.kind, SendFeeNegotiator::Step::Done);
+        QCOMPARE(send.done.result.status, WalletModel::Aborted);
+    }
+    // One fee accepted, the next declined.
+    {
+        const NegotiatedSend send = Negotiate({FeeRequired(FEE), FeeRequired(FEE + 1)}, {true, false});
+        QCOMPARE(send.fees_passed, (std::vector<qint64>{0, FEE}));
+        QCOMPARE(send.done.result.status, WalletModel::Aborted);
+    }
+
+    // A fee that keeps rising: ten prompts are accepted, and the eleventh
+    // request ends the send as a creation failure.
+    {
+        std::vector<WalletModel::SendCoinsReturn> results;
+        for (int i = 0; i <= 10; ++i) results.push_back(FeeRequired(FEE + i));
+        const NegotiatedSend send = Negotiate(results, std::vector<bool>(20, true));
+        QCOMPARE(send.fees_passed.size(), size_t{11});
+        QCOMPARE(send.fees_asked.size(), size_t{10});
+        QCOMPARE(send.fees_passed.back(), qint64{FEE + 9});
+        QCOMPARE(send.done.kind, SendFeeNegotiator::Step::Done);
+        QCOMPARE(send.done.result.status, WalletModel::TransactionCreationFailed);
+    }
+
+    // A first result that asks for no fee ends the send with that result
+    // unchanged.
+    {
+        constexpr qint64 SHORT_FEE = 987654321;
+        const NegotiatedSend send =
+            Negotiate({WalletModel::SendCoinsReturn(WalletModel::AmountWithFeeExceedsBalance, SHORT_FEE, "bb")}, {});
+        QCOMPARE(send.fees_asked.size(), size_t{0});
+        QCOMPARE(send.done.kind, SendFeeNegotiator::Step::Done);
+        QCOMPARE(send.done.result.status, WalletModel::AmountWithFeeExceedsBalance);
+        QCOMPARE(send.done.result.fee, SHORT_FEE);
+        QCOMPARE(send.done.result.hex, QStringLiteral("bb"));
     }
 }
