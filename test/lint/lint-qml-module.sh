@@ -8,10 +8,16 @@
 #
 # src/qt/quick, the C++ module, does not hold the GUI thread for a prompt or a
 # long call: every prompt is a request, then a signal, then an answer, and long
-# calls run on QmlCallRunner's lanes. Two waits are by design:
-# QmlCallRunner::drain(), where teardown waits for an in-flight serial call,
-# and qml_main.cpp's start-up error box, shown before any event loop runs
-# (qml_main.cpp is not scanned). The first check is a tripwire for the common
+# calls run on QmlCallRunner's lanes. Three waits are by design. Two run at
+# teardown, in GuiFrontEnd::detachModels: QmlCallRunner::drain(), where
+# teardown waits for an in-flight serial call, and WalletOpGate::detach(),
+# which QmlFrontEnd::detachWallet calls after that drain to restore a wallet
+# still unlocked for a wallet operation; the restore runs on the GUI thread,
+# and narrowing the wallet back to staking only waits there for any other
+# holder of the wallet's lock (a send in flight, the staker, or a rescan) to
+# finish. The other is qml_main.cpp's start-up error box, shown before any
+# event loop runs (the first check does not scan qml_main.cpp). The first
+# check is a tripwire for the common
 # constructs that block or spin a nested event loop, not a proof that none
 # exists: QEventLoop, an exec call, a blocking queued connection (including
 # GUIUtil's helper that returns one), waitForFinished, waitForDone,
@@ -19,6 +25,18 @@
 # QMessageBox, QFileDialog, QInputDialog, QColorDialog and QFontDialog. The
 # module's tests (src/qt/quick/test/) are not scanned: a test may run the
 # application's own event loop, as the quit test does.
+#
+# The second check fails on the message, file and input dialog classes named
+# anywhere in the module, qml_main.cpp included, and not only on the static
+# calls the first check matches: the module's prompts are QML. The one
+# allowed use is qml_main.cpp's start-up error box above, its include and its
+# one call, matched by their text at any line, so another dialog in that file
+# fails unless its line repeats one of those two texts. The third check fails
+# on the Widgets models' synchronous unlock contract (the model's unlock
+# request and its scoped unlock context) and on the Widgets voting and
+# address-book calls that run it: the module asks for the passphrase through
+# its wallet-operation gate instead. All three grep the text, so the module's
+# comments name none of these words either.
 #
 # src/qt/qml, the carried QML front end, holds QML only, so the module's checks
 # cannot be sidestepped there. Its files still bind the context properties of
@@ -56,6 +74,34 @@ OUTPUT=$(git grep -n -E "${PATTERN}" -- src/qt/quick ':!src/qt/quick/test' ':!sr
 RC=$? # 0: a match, 1: no match, anything else: git grep failed
 if [ ${RC} -eq 0 ]; then
     echo "Blocking construct(s) in the QML module (src/qt/quick, tests excluded):"
+    echo "${OUTPUT}"
+    EXIT_CODE=1
+elif [ ${RC} -ne 1 ]; then
+    echo "lint-qml-module: git grep failed (exit ${RC})."
+    exit 1
+fi
+
+DIALOG_PATTERN='QMessageBox|QFileDialog|QInputDialog'
+# qml_main.cpp's start-up error box, by text: its include and its one call.
+DIALOG_ALLOWED='^src/qt/quick/qml_main\.cpp:[0-9]+:(#include <QMessageBox>|[[:space:]]+QMessageBox::critical\(nullptr, PACKAGE_NAME,)$'
+OUTPUT=$(git grep -n -E "${DIALOG_PATTERN}" -- src/qt/quick ':!src/qt/quick/test')
+RC=$? # 0: a match, 1: no match, anything else: git grep failed
+if [ ${RC} -gt 1 ]; then
+    echo "lint-qml-module: git grep failed (exit ${RC})."
+    exit 1
+fi
+OUTPUT=$(grep -v -E "${DIALOG_ALLOWED}" <<< "${OUTPUT}")
+if [ -n "${OUTPUT}" ]; then
+    echo "Widgets dialog(s) in the QML module (src/qt/quick, tests excluded; only qml_main.cpp's start-up error box is allowed); prompt through a request, a signal and an answer instead:"
+    echo "${OUTPUT}"
+    EXIT_CODE=1
+fi
+
+UNLOCK_PATTERN='requestUnlock|UnlockContext|sendVote\(|sendPoll\(|addRow\('
+OUTPUT=$(git grep -n -E "${UNLOCK_PATTERN}" -- src/qt/quick ':!src/qt/quick/test')
+RC=$? # 0: a match, 1: no match, anything else: git grep failed
+if [ ${RC} -eq 0 ]; then
+    echo "The QML module reaches the synchronous unlock contract (src/qt/quick, tests excluded); ask through the wallet-operation gate instead:"
     echo "${OUTPUT}"
     EXIT_CODE=1
 elif [ ${RC} -ne 1 ]; then

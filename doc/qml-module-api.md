@@ -157,6 +157,47 @@ check.
 | `setText(text)` | invokable | Writes `text` without its thin spaces (U+2009), the digit-group separators of a formatted amount. |
 | `text()` | invokable | The clipboard's text. |
 
+`WalletOps` (singleton): the wallet-operation gate. One wallet operation at a time across the module, through the
+prompt latch the gate takes; its `Security` owner is for the wallet's other passphrase prompts, which take it in a
+later change. Lane: serial, for every read and wallet call below.
+
+| Name | Kind | Meaning |
+|---|---|---|
+| `marker` | property, constant | As for `Shell`. |
+| `busy` | property, bool | A request of the gate holds the shared prompt latch. |
+| `Mode` | enum | `Unlock` (the wallet is locked) or `Elevate` (it is unlocked for staking only), from one lock-state read when the request begins. |
+| `Failure` | enum | `WrongPassphrase`, `WrongPassphraseNul` (the passphrase holds a zero byte) or `ExpiredDuringPrompt` (an elevation found the wallet locked again). |
+| `Result` | enum | `Completed` or `Cancelled`. |
+| `unlockRequested(id, mode, title, text)` | signal | The request `id` needs the passphrase. The title and text are `AskPassphraseDialog`'s. |
+| `answerUnlock(id, passphrase)` | invokable | Answers the request with a passphrase. Returns false, and makes no call, unless `id` is waiting for that answer. The passphrase becomes a `SecureString` at once and is kept nowhere. |
+| `cancelUnlock(id)` | invokable | Cancels the request, whether it is waiting or its answer is running. Returns false unless `id` is open. |
+| `unlockFailed(id, reason, text)` | signal | The answer failed; the request waits for another answer. |
+| `unlockAccepted(id)` | signal | The wallet is unlocked, or widened, for the request's operation. |
+| `finished(id, result)` | signal | The request ended. |
+
+`SendCoins` (singleton): the send page. An amount is halfords plus a text in the display unit; the confirmation, fee
+and result texts are those of the Widgets send dialog.
+
+| Name | Kind | Meaning |
+|---|---|---|
+| `marker` | property, constant | As for `Shell`. |
+| `recipients` | property, list model | The rows, always at least one. Roles: `recipient`, `label`, `amount` (halfords), `amountText`, `message`, `subtractFee`, `addressValid`, `amountValid`. |
+| `busy` | property, bool | True from a non-zero `send()` until its `finished` (or, when a disconnect ended the send, until detach). Meanwhile `send()` returns 0, every row edit is refused, and a URI waits in the core bridge. |
+| `messageAllowed` | property, bool | Whether a transaction message can be sent at the next block (`-messagecontractdisableheight`); true until the first block height arrives. Only the first row's message is sent. Lane: none (`numBlocksChanged`). |
+| `unitName` | property, string | The display unit's name. |
+| `Outcome` | enum | `Sent`, `Aborted`, `Failed`, or `Busy` (the gate refused to begin: the prompt latch is held, or the runner, closed at quit, refused the read). |
+| `addRecipient()`, `removeRecipient(row)`, `clearRecipients()` | invokables | Row edits; false when refused (a send in progress, unattached, or the last row). |
+| `updateRecipient(row, map)` | invokable | Sets any of `recipient`, `label`, `amount` (text in the display unit), `message` and `subtractFee`; false when refused. |
+| `send()` | invokable | Validates every row and marks the invalid ones; returns 0 if any is invalid or a send is in progress, else copies the rows and returns the request id. |
+| `sendConfirmationRequested(id, title, text)` | signal | The send confirmation; the text is rich text, with each label escaped. |
+| `confirmSend(id, yes)` | invokable | Answers the confirmation. Yes asks `WalletOps` for the wallet, which may ask for the passphrase. |
+| `feeConfirmationRequested(id, fee, title, text)` | signal | The wallet needs a fee (halfords) above the one accepted so far. The wallet stays unlocked while the question is open. |
+| `confirmFee(id, yes)` | invokable | Answers the fee question; yes sends again with that fee accepted. At most ten fees are asked per send. |
+| `finished(id, outcome, title, message, txid)` | signal | The request ended. The message is empty for `Sent` and `Aborted`; `txid` is set for `Sent`. |
+| `acceptUri(url)` | invokable | Hands a dropped URL to the core bridge, the path a received URI takes. |
+| `claimPendingUri()` | invokable | Takes the bridge's pending URI unless a send is in progress: a valid one fills the page and emits `uriAccepted()`, an invalid one emits `uriRejected(title, text)`. A finished send claims a URI that waited for it. |
+| `outOfSyncTitle()`, `outOfSyncText()` | invokables | The Widgets warning shown before the send page while the wallet is out of sync. |
+
 ### `Shell` (singleton)
 
 | Name | Kind | Meaning |
@@ -255,24 +296,24 @@ there.
 | `_walletModel` | `transactionTableModel` | `RecentTransactions`, for the overview | The overview list is `OverviewTxModel`'s cursor, not the history table; the history model is planned. |
 | `_walletModel` | `addressTableModel` | planned address-book models | |
 | `_walletModel` | `receiveAddressTableModel` | planned address-book models | |
-| `_walletModel` | `unlockWallet(QString)` | planned wallet-operation gate: `answerUnlock(passphrase)` | |
-| `_walletModel` | `cancelUnlock()` | planned wallet-operation gate: `cancelUnlock()` | |
-| `_walletModel` | `requireUnlock()` | planned wallet-operation gate: `unlockRequested(mode)` | |
-| `_walletModel` | `askFeeResult(bool)` | planned send adapter: `confirmFee(bool)` | |
-| `_walletModel` | `askFeeDialog(int64_t)` | planned send adapter: `feeConfirmationRequested(fee)` | |
+| `_walletModel` | `unlockWallet(QString)` | `WalletOps.answerUnlock(id, passphrase)` | |
+| `_walletModel` | `cancelUnlock()` | `WalletOps.cancelUnlock(id)` | |
+| `_walletModel` | `requireUnlock()` | `WalletOps.unlockRequested(id, mode, title, text)` | |
+| `_walletModel` | `askFeeResult(bool)` | `SendCoins.confirmFee(id, yes)` | |
+| `_walletModel` | `askFeeDialog(int64_t)` | `SendCoins.feeConfirmationRequested(id, fee, title, text)` | The fee in halfords. |
 | `_researcherModel` | `magnitude` | `ResearcherSummary.magnitudeText` | |
 | `_researcherModel` | `accrual` | `ResearcherSummary.accrualText` | |
 | `_researcherModel` | `cpid` | `ResearcherSummary.cpid` | |
 | `_researcherModel` | `status` | `ResearcherSummary.statusText` | |
 | `_researcherModel` | `researcherMode` | `ResearcherSummary.mode` | An enum, not 0, 1 or 2. |
 | `_votingModel` | `currentPollTitle` | `VotingSummary.currentPollTitle` | |
-| `_sendCoinsController` | `recipients` | planned send adapter | Typed recipients, amounts in halfords. |
-| `_sendCoinsController` | `addRecipient()` | planned send adapter | |
-| `_sendCoinsController` | `removeRecipient(int)` | planned send adapter | |
-| `_sendCoinsController` | `updateRecipient(int, map)` | planned send adapter | |
-| `_sendCoinsController` | `clearRecipients()` | planned send adapter | |
-| `_sendCoinsController` | `sendCoins()` | planned send adapter | The result arrives through `finished(id, result)`. |
-| `_sendCoinsController` | `coinsSentOrFailed(QString)` | planned send adapter | The result arrives through `finished(id, result)`. |
+| `_sendCoinsController` | `recipients` | `SendCoins.recipients` | Typed recipients, amounts in halfords. |
+| `_sendCoinsController` | `addRecipient()` | `SendCoins.addRecipient()` | |
+| `_sendCoinsController` | `removeRecipient(int)` | `SendCoins.removeRecipient(row)` | |
+| `_sendCoinsController` | `updateRecipient(int, map)` | `SendCoins.updateRecipient(row, map)` | |
+| `_sendCoinsController` | `clearRecipients()` | `SendCoins.clearRecipients()` | |
+| `_sendCoinsController` | `sendCoins()` | `SendCoins.send()` | The confirmation, the passphrase and the fee are asked through signals; the result arrives through `SendCoins.finished`. |
+| `_sendCoinsController` | `coinsSentOrFailed(QString)` | `SendCoins.finished(id, outcome, title, message, txid)` | |
 | `_nativeDialog` | `information()` | none | QML shows its own dialogs and answers through the request, signal and answer shape; once the front end exists the module never shows a blocking dialog (section 5). |
 | `_nativeDialog` | `warning()` | none | As above. |
 | `_nativeDialog` | `question()` | none | As above. |
@@ -313,10 +354,30 @@ a request id. The module emits a signal saying what it needs. QML answers throug
 the request open. There is no nested event loop and no blocking connection anywhere in the
 module but one: `gridcoinresearch-qml`'s start-up error box in `qml_main.cpp`, shown from
 the factory before `GuiMain` opens its log, connects to a daemon or starts the core, as
-`GuiMain`'s own start-up error boxes are. The one wait on the GUI thread is
-`QmlCallRunner::drain()`, by design: teardown waits there for an in-flight serial call.
-`test/lint/lint-qml-module.sh` is a tripwire for the common blocking constructs in the
-rest, not a proof.
+`GuiMain`'s own start-up error boxes are. Besides the synchronous calls section 4 lists, the
+module has two waits on the GUI thread by design, both at teardown in
+`GuiFrontEnd::detachModels`: `QmlCallRunner::drain()`, where teardown waits for an in-flight
+serial call, and `WalletOpGate::detach()` (the C++ side of `WalletOps`), which
+`QmlFrontEnd::detachWallet` calls after that drain to restore a wallet still unlocked for a
+wallet operation. That restore runs on the GUI thread (an IPC round trip under
+`-multiprocess`). Narrowing the wallet back to staking only takes the wallet's lock
+(`CWallet::RestrictToStakingOnly`), so it waits there for any other holder of that lock to
+finish: a send in flight, the staker, or a rescan, which holds the lock for the whole scan.
+The module's pooled calls are not waited for in the module: the composition root reaps the
+global `QThreadPool` on the GUI thread after `detachModels` (`FrontEndDetachGuard`), on
+every exit path. `test/lint/lint-qml-module.sh` is a tripwire for the common blocking
+constructs in the rest, not a proof.
+
+The wallet-operation gate is the worked example. `SendCoins.confirmSend(id, true)` asks `WalletOps` for the wallet.
+The gate decides the mode from one lock-state read on the serial lane; a locked wallet, or one unlocked for staking
+only, emits
+`WalletOps.unlockRequested(id, mode, title, text)`, and the unlock dialog answers with
+`WalletOps.answerUnlock(id, passphrase)` or `WalletOps.cancelUnlock(id)`. A wrong passphrase emits `unlockFailed`, and
+the request waits for another answer. With the wallet unlocked, each send attempt runs on the serial lane; a fee above
+the accepted one emits `SendCoins.feeConfirmationRequested`, which `SendCoins.confirmFee` answers while the wallet stays
+unlocked; the result is `SendCoins.finished`. The gate takes the prompt latch, which the wallet's other
+passphrase prompts take too in a later change, so one wallet operation runs at a time across the module: a send asked
+for while the latch is held, or whose read the runner refuses after its close at quit, finishes at once with `Busy`.
 
 ## 6. Lanes
 
@@ -352,6 +413,7 @@ The audited model methods, each with what it calls and stores:
 - `ClientModel::getStatusBarWarnings`: calls `Node::getWarnings()` and `StakingStatus::isStaking()`; calls the model's own `getDifficulty` (which loads `m_cached_difficulty` and, while it holds -1, calls `Node::getDifficulty()` and stores the result there) and `getMinerWarnings`; formats with the model's static `tr`.
 - `ClientModel::getMinerWarnings`: calls `StakingStatus::getErrors()`; stores nothing.
 - `ClientModel::getNetWeight`: loads `m_cached_net_weight`; while it holds -1, calls `StakingStatus::getNetworkWeight()` and stores the result divided by 80 there.
+- `WalletModel::sendCoins`: the one audited method that changes wallet state, called by `SendCoins`' send attempt. It checks the recipients it is given with the model's own `validateAddress` (`DecodeDestination` and `IsValidDestination`), calls `Wallet::sendCoins()`, and maps the result to a `SendCoinsReturn`; stores nothing. The serial lane is drained before `detachWallet`, so the model outlives the call.
 
 A lazy fill of a cache still at -1 runs on the serial thread too, so once per process, at start-up, it can race with `ClientModel::updateNumBlocks` storing a value on the GUI thread; each store is one atomic store, and the value kept may be older or newer than the one it replaced.
 
@@ -360,6 +422,8 @@ Coalescing. Each adapter has at most one read of a kind in flight; a trigger tha
 The update check. `AboutInfo.checkForUpdate()` runs `checkForLatestUpdate` on the pooled lane. When it returns no version, the same closure re-reads the node's `disableupdatecheck` setting, so a setting changed at run time is reported as the configuration reason, not as a network failure. Each About open calls `AboutInfo.refreshUpdateCheck()`, which re-reads this process's `-disableupdatecheck` at once and the node's setting on the serial lane.
 
 Constraints on later steps. No caller may call `QmlCallRunner::bumpGeneration` between `attachModels` and `detachModels`: a bump drops the deliveries of reads in flight, and an adapter whose delivery was dropped keeps its read in flight for the rest of the session. No step may block the serial thread waiting for a user answer: a prompt happens between serial calls.
+
+The wallet-operation gate. `WalletOps` runs every wallet call of a wallet operation on the serial lane: its lock-state read, the unlock or elevation, the operation's own calls and the restore. No serial call waits for the user: each prompt is emitted from the delivery of a call that has returned, and the answer posts the next call. Across a fee question the wallet stays unlocked and no serial call is in flight. An unlock is held by a lease, which restores the wallet (relocks it, or narrows it back to staking only) exactly once, whichever comes first: on the serial lane after the operation's last call; on the serial lane before an exception thrown by an operation under the lease is classified; on the serial lane when the request is cancelled while its answer runs; or, for a lease still held at quit, synchronously on the GUI thread in `detachWallet`, after the event loop has ended. A release that a moved generation dropped is posted again by the next request, before its own read; one that the runner's close or drain at quit dropped or refused is made in `detachWallet`, since a closed runner refuses every later post. The gate's serial closures capture the `Wallet&` and the request's lease (a `std::shared_ptr` holding the `Wallet&` and the restore flags), never the gate. The rule above on `QmlCallRunner::bumpGeneration` covers the gate, since `WalletOps.busy` implies attached: for the gate, a dropped delivery leaves the shared prompt latch held until detach (so the other passphrase prompts, once they take it, are refused too), and a dropped release is posted again by the next request.
 
 ## 7. Core messages
 
@@ -418,11 +482,13 @@ The root, `WindowManager.qml`, shows each core message in a window of its own, a
   `LoadQmlFonts` registers the bundled fonts. `MMPTheme` takes its font family from it.
 - The root and its shell (`WindowManager.qml`, `SplashScreen.qml`, `MainWindow.qml` and
   `TabMenu.qml`), the overview (`OverviewView.qml` and `RecentTransactionItem.qml`), the
-  status footer (`StatusFooter.qml`), the About window (`AboutWindow.qml`) and the new
-  `BuildMismatchBanner.qml` and `VersionInfoWindow.qml` bind `Gridcoin.Qml` or no context
-  property at all. The other carried screens still bind the context properties of the
-  branch they came from. `test/lint/lint-qml-module.sh` holds the list of files that may
-  (`EditAddressDialog.qml`, `ReceiveView.qml`, `SendView.qml` and `UnlockDialog.qml`); a file is
+  status footer (`StatusFooter.qml`), the About window (`AboutWindow.qml`), the send page
+  (`SendView.qml`), the unlock dialog (`UnlockDialog.qml`) and the new
+  `BuildMismatchBanner.qml`, `VersionInfoWindow.qml`, `WalletPromptDialog.qml` and
+  `WalletPrompts.qml` bind `Gridcoin.Qml` or no context property at all. The other carried
+  screens still bind the context properties of the branch they came from.
+  `test/lint/lint-qml-module.sh` holds the list of files that may (`EditAddressDialog.qml`
+  and `ReceiveView.qml`); a file is
   removed from it when it binds to `Gridcoin.Qml` names, a listed file that binds none fails
   the lint, and the list is to be empty before the QML front end becomes the default.
 - Window state: Qt 6.7 and later defer a QML assignment to `visible` or `visibility` on a
