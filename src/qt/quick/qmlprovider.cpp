@@ -9,6 +9,7 @@
 #include <qt/quick/clipboard.h>
 #include <qt/quick/recenttransactions.h>
 #include <qt/quick/researchersummary.h>
+#include <qt/quick/sendadapter.h>
 #include <qt/quick/shelladapter.h>
 #include <qt/quick/splashadapter.h>
 #include <qt/quick/votingsummary.h>
@@ -44,6 +45,7 @@ QmlProvider::QmlProvider(GuiFrontEnd& frontend)
     // the latch comes first.
     m_wallet_prompt_latch = std::make_unique<WalletPromptLatch>();
     m_wallet_ops = std::make_unique<WalletOpGate>(m_marker, *m_wallet_prompt_latch);
+    m_send_adapter = std::make_unique<SendAdapter>(m_marker, *m_wallet_ops);
 }
 
 QmlProvider::~QmlProvider()
@@ -114,6 +116,11 @@ WalletPromptLatch& QmlProvider::walletPromptLatch()
 WalletOpGate& QmlProvider::walletOps()
 {
     return *m_wallet_ops;
+}
+
+SendAdapter& QmlProvider::sendAdapter()
+{
+    return *m_send_adapter;
 }
 
 int QmlProvider::marker() const

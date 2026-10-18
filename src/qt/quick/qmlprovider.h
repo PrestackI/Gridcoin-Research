@@ -13,6 +13,7 @@ class Clipboard;
 class GuiFrontEnd;
 class RecentTransactions;
 class ResearcherSummary;
+class SendAdapter;
 class ShellAdapter;
 class SplashAdapter;
 class VotingSummary;
@@ -51,6 +52,7 @@ public:
     Clipboard& clipboard();
     WalletPromptLatch& walletPromptLatch();
     WalletOpGate& walletOps();
+    SendAdapter& sendAdapter();
     int marker() const;
 
 private:
@@ -66,6 +68,7 @@ private:
     std::unique_ptr<Clipboard> m_clipboard;
     std::unique_ptr<WalletPromptLatch> m_wallet_prompt_latch;
     std::unique_ptr<WalletOpGate> m_wallet_ops;
+    std::unique_ptr<SendAdapter> m_send_adapter;
 };
 
 #endif // BITCOIN_QT_QUICK_QMLPROVIDER_H

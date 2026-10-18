@@ -11,8 +11,11 @@
 #include "qmltestutil.h"
 #include "quittests.h"
 #include "rootwiringtests.h"
+#include "sendadaptertests.h"
 #include "statusadaptertests.h"
 #include "walletopgatetests.h"
+
+#include <chainparams.h>
 
 #include <QTest>
 #include <QtGlobal>
@@ -37,6 +40,12 @@ int main(int argc, char* argv[])
         qputenv("QT_QUICK_BACKEND", "software");
     }
     qml_test::QmlTestApplication app(argc, argv);
+
+    // SendAdapter::setChainHeight reaches Params() through
+    // GetMessageContractDisableHeight, and the wiring classes emit
+    // ClientModel::numBlocksChanged on an attached front end before any class
+    // selects a chain of its own, so the whole binary runs on regtest.
+    SelectParams(CBaseChainParams::REGTEST);
 
     bool fInvalid = false;
 
@@ -71,6 +80,9 @@ int main(int argc, char* argv[])
 
     QmlWalletOpGateTests test10;
     if (QTest::qExec(&test10) != 0) fInvalid = true;
+
+    QmlSendAdapterTests test11;
+    if (QTest::qExec(&test11) != 0) fInvalid = true;
 
     // The test application swallows what its notify() catches; nothing a test
     // did not expect may be left.

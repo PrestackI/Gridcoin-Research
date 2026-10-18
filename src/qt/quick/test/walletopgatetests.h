@@ -16,7 +16,8 @@
 //! WalletOps, the wallet-operation gate, on a front end's call runner over a
 //! scripted wallet: the lock-state read, the passphrase request and its
 //! answers, the lease that gives the wallet back its scope, the shared prompt
-//! latch and the detach. It runs no event loop.
+//! latch and the detach, and the threads its wallet calls (and the send
+//! adapter's, through it) run on. It runs no event loop.
 class QmlWalletOpGateTests : public QObject
 {
     Q_OBJECT
@@ -48,6 +49,7 @@ private Q_SLOTS:
     void cancelAfterWorkerReadFlag();
     void promptLatchShared();
     void throwingOpReleasesBeforeFatal();
+    void walletCallsOffGuiThread();
     void unlockPassphraseInSecureMemory();
 
 private:

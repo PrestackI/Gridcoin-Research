@@ -12,6 +12,7 @@
 #include <qt/quick/qmlengine.h>
 #include <qt/quick/recenttransactions.h>
 #include <qt/quick/researchersummary.h>
+#include <qt/quick/sendadapter.h>
 #include <qt/quick/shelladapter.h>
 #include <qt/quick/splashadapter.h>
 #include <qt/quick/votingsummary.h>
@@ -182,6 +183,17 @@ void QmlFrontEnd::attachModels(const ModelBundle& models)
     m_provider->votingSummary().attach(models.voting, *m_runner);
     m_provider->aboutInfo().attach(models.client, *m_runner);
     m_provider->walletOps().attach(models.wallet.wallet(), *m_runner);
+    m_provider->sendAdapter().attach(models.wallet, &models.client, *m_runner);
+    // Only construct() creates the core bridge; a front end that never
+    // constructed has no URI to hand over.
+    if (m_bridge) {
+        QmlCoreBridge* bridge = m_bridge.get();
+        m_provider->sendAdapter().setUriSource([bridge] { return bridge->takePendingUri(); },
+                                               [bridge](const QString& uri) { bridge->handleURI(uri); });
+        QObject::connect(bridge, &QmlCoreBridge::pendingUriChanged,
+                         &m_provider->sendAdapter(), &SendAdapter::claimPendingUri);
+        m_provider->sendAdapter().claimPendingUri();
+    }
 }
 
 void QmlFrontEnd::showMain(bool minimized)
@@ -260,6 +272,7 @@ void QmlFrontEnd::detachWallet()
     m_provider->walletSummary().detach();
     m_provider->recentTransactions().detach();
     m_provider->walletOps().detach();
+    m_provider->sendAdapter().detach();
 }
 
 void QmlFrontEnd::detachMRC()

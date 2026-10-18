@@ -43,6 +43,10 @@ qt_add_qml_module(gridcoinqml
         walletpromptlatch.h
         walletopgate.cpp
         walletopgate.h
+        sendrecipientmodel.cpp
+        sendrecipientmodel.h
+        sendadapter.cpp
+        sendadapter.h
 )
 target_include_directories(gridcoinqml PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gridcoinqml PUBLIC

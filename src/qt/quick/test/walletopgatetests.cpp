@@ -9,12 +9,20 @@
 
 #include <chainparams.h>
 #include <interfaces/wallet.h>
+#include <interfaces/wallet_coin_source.h>
+#include <key_io.h>
+#include <pubkey.h>
+#include <qt/optionsmodel.h>
 #include <qt/quick/qmlcallrunner.h>
 #include <qt/quick/qmlfrontend.h>
 #include <qt/quick/qmlprovider.h>
+#include <qt/quick/sendadapter.h>
 #include <qt/quick/walletopgate.h>
 #include <qt/quick/walletpromptlatch.h>
+#include <qt/test/interfacefakes.h>
 #include <qt/test/modelfakes.h>
+#include <qt/walletmodel.h>
+#include <uint256.h>
 #include <util.h>
 
 #include <QCoreApplication>
@@ -24,6 +32,7 @@
 #include <QTest>
 #include <QThreadPool>
 #include <QUrl>
+#include <QVariantMap>
 #include <QtGlobal>
 
 #include <atomic>
@@ -193,6 +202,35 @@ QString ExpiredText()
 QString Pass()
 {
     return QString::fromStdString(PASSPHRASE);
+}
+
+QString MethodName(Method method)
+{
+    switch (method) {
+    case Method::GetLockState: return QStringLiteral("getLockState");
+    case Method::UnlockWallet: return QStringLiteral("unlockWallet");
+    case Method::ElevateWallet: return QStringLiteral("elevateWallet");
+    case Method::LockWallet: return QStringLiteral("lockWallet");
+    case Method::RestrictToStakingOnly: return QStringLiteral("restrictToStakingOnly");
+    case Method::SendCoins: return QStringLiteral("sendCoins");
+    case Method::Op: return QStringLiteral("op");
+    }
+    return QString();
+}
+
+//! A valid address of the selected chain, distinct for each `b`.
+QString Address(unsigned char b)
+{
+    return QString::fromStdString(EncodeDestination(CKeyID(uint160(std::vector<unsigned char>(20, b)))));
+}
+
+interfaces::SendCoinsResult SendResult(interfaces::SendCoinsStatus status, int64_t fee = 0)
+{
+    interfaces::SendCoinsResult result;
+    result.status = status;
+    result.fee = fee;
+    if (status == interfaces::SendCoinsStatus::OK) result.txid_hex = "abcdef";
+    return result;
 }
 
 } // namespace
@@ -1093,6 +1131,131 @@ void QmlWalletOpGateTests::throwingOpReleasesBeforeFatal()
     QVERIFY(CallsOf(wallet, Method::LockWallet)[0].thread != gui);
     QCOMPARE(QString::fromStdString(qml_test::g_rethrown.front().first), QStringLiteral("boom"));
     QCOMPARE(disconnects.load(), 0);
+}
+
+void QmlWalletOpGateTests::walletCallsOffGuiThread()
+{
+    qml_test::Watchdog watchdog("QmlWalletOpGateTests::walletCallsOffGuiThread");
+    const std::thread::id gui = std::this_thread::get_id();
+    qt_test::ScriptedWallet wallet;
+    wallet.setPassphrase(PASSPHRASE);
+    wallet.setLockState(true, true, false);
+    qt_test::FakeNode node;
+    qt_test::FakeSideStakeManager side_stakes;
+    OptionsModel options(node, side_stakes);
+    qt_test::FakeWalletTxSource tx_source;
+    std::shared_ptr<interfaces::WalletCoinSource> coin_source = interfaces::MakeSyntheticCoinSource(0, 1);
+    WalletModel model(wallet, tx_source, *coin_source, &options);
+    qt_test::FakeLatch unlock_latch;
+    std::atomic<int> disconnects{0};
+    qml_test::CountingQuitFrontEnd fe(ROOT_URL, qml_test::CountingCallbacks(disconnects));
+    qml_test::ScopeExit detach([&fe] { fe.detachModels(); });
+    qml_test::ScopeExit unlatch([&] {
+        unlock_latch.open = true;
+        wallet.m_unlock_latch = nullptr;
+    });
+    WalletOpGate& gate = fe.provider().walletOps();
+    gate.attach(wallet, fe.callRunner());
+    SendAdapter& adapter = fe.provider().sendAdapter();
+    adapter.attach(model, nullptr, fe.callRunner());
+    Spies spies(gate);
+    QSignalSpy sent(&adapter, &SendAdapter::finished);
+    QSignalSpy fee(&adapter, &SendAdapter::feeConfirmationRequested);
+    Callbacks calls;
+
+    // A locked wallet unlocked for an operation.
+    quint64 id = gate.begin(RecordGrantAndOp(gate, calls), RecordRefusal(calls));
+    QVERIFY(id != 0);
+    QVERIFY(qml_test::PumpUntil([&] { return spies.requested.count() == 1; }, 2s));
+    QVERIFY(gate.answerUnlock(id, Pass()));
+    QVERIFY(qml_test::PumpUntil([&] { return wallet.opCalls() == 1; }, 2s));
+    gate.end(id);
+    QVERIFY(SerialProbe(fe.callRunner()));
+
+    // An unlock for staking widened for an operation.
+    wallet.setLockState(true, false, true);
+    id = gate.begin(RecordGrantAndOp(gate, calls), RecordRefusal(calls));
+    QVERIFY(id != 0);
+    QVERIFY(qml_test::PumpUntil([&] { return spies.requested.count() == 2; }, 2s));
+    QVERIFY(gate.answerUnlock(id, Pass()));
+    QVERIFY(qml_test::PumpUntil([&] { return wallet.opCalls() == 2; }, 2s));
+    gate.end(id);
+    QVERIFY(SerialProbe(fe.callRunner()));
+
+    // A wrong passphrase, then the right one.
+    wallet.setLockState(true, true, false);
+    id = gate.begin(RecordGrantAndOp(gate, calls), RecordRefusal(calls));
+    QVERIFY(id != 0);
+    QVERIFY(qml_test::PumpUntil([&] { return spies.requested.count() == 3; }, 2s));
+    QVERIFY(gate.answerUnlock(id, QStringLiteral("wrong")));
+    QVERIFY(qml_test::PumpUntil([&] { return spies.failed.count() == 1; }, 2s));
+    QVERIFY(gate.answerUnlock(id, Pass()));
+    QVERIFY(qml_test::PumpUntil([&] { return wallet.opCalls() == 3; }, 2s));
+    gate.end(id);
+    QVERIFY(SerialProbe(fe.callRunner()));
+
+    // Cancelled while the answer runs.
+    id = gate.begin(RecordGrantAndOp(gate, calls), RecordRefusal(calls));
+    QVERIFY(id != 0);
+    QVERIFY(qml_test::PumpUntil([&] { return spies.requested.count() == 4; }, 2s));
+    const int unlocks_before = wallet.unlockCalls();
+    wallet.m_unlock_latch = &unlock_latch;
+    QVERIFY(gate.answerUnlock(id, Pass()));
+    QVERIFY(WaitNoEvents([&] { return wallet.unlockCalls() == unlocks_before + 1; }, 2s));
+    QVERIFY(gate.cancelUnlock(id));
+    unlock_latch.open = true;
+    QVERIFY(qml_test::PumpUntil([&] { return spies.finished.count() == 4; }, 2s));
+    wallet.m_unlock_latch = nullptr;
+    QVERIFY(SerialProbe(fe.callRunner()));
+
+    // Cancelled after the answer's call returned.
+    const int locks_before = wallet.lockCalls();
+    id = gate.begin(RecordGrantAndOp(gate, calls), RecordRefusal(calls));
+    QVERIFY(id != 0);
+    QVERIFY(qml_test::PumpUntil([&] { return spies.requested.count() == 5; }, 2s));
+    QVERIFY(gate.answerUnlock(id, Pass()));
+    QVERIFY(SerialProbeNoEvents(fe.callRunner()));
+    QVERIFY(gate.cancelUnlock(id));
+    QVERIFY(qml_test::PumpUntil(
+        [&] { return spies.finished.count() == 5 && wallet.lockCalls() == locks_before + 1; }, 2s));
+    QVERIFY(SerialProbe(fe.callRunner()));
+
+    // A send on a locked wallet.
+    wallet.scriptSend({SendResult(interfaces::SendCoinsStatus::OK)});
+    QVERIFY(adapter.updateRecipient(0, QVariantMap{{QStringLiteral("recipient"), Address(1)},
+                                                   {QStringLiteral("amount"), QStringLiteral("1")}}));
+    quint64 send_id = adapter.send();
+    QVERIFY(send_id != 0);
+    QVERIFY(adapter.confirmSend(send_id, true));
+    QVERIFY(qml_test::PumpUntil([&] { return spies.requested.count() == 6; }, 2s));
+    QVERIFY(gate.answerUnlock(IdOf(spies.requested, 5), Pass()));
+    QVERIFY(qml_test::PumpUntil([&] { return sent.count() == 1; }, 2s));
+    QVERIFY(SerialProbe(fe.callRunner()));
+
+    // A send with a fee question, the wallet unlocked across it.
+    wallet.scriptSend({SendResult(interfaces::SendCoinsStatus::FeeConfirmationRequired, 123456789),
+                       SendResult(interfaces::SendCoinsStatus::OK)});
+    QVERIFY(adapter.updateRecipient(0, QVariantMap{{QStringLiteral("recipient"), Address(1)},
+                                                   {QStringLiteral("amount"), QStringLiteral("1")}}));
+    send_id = adapter.send();
+    QVERIFY(send_id != 0);
+    QVERIFY(adapter.confirmSend(send_id, true));
+    QVERIFY(qml_test::PumpUntil([&] { return spies.requested.count() == 7; }, 2s));
+    QVERIFY(gate.answerUnlock(IdOf(spies.requested, 6), Pass()));
+    QVERIFY(qml_test::PumpUntil([&] { return fee.count() == 1; }, 2s));
+    QVERIFY(adapter.confirmFee(send_id, true));
+    QVERIFY(qml_test::PumpUntil([&] { return sent.count() == 2; }, 2s));
+    QVERIFY(SerialProbe(fe.callRunner()));
+
+    // Read before the detach, whose restore is the gate's one call on the GUI
+    // thread.
+    const std::vector<qt_test::ScriptedWallet::Call> log = wallet.log();
+    QVERIFY(wallet.sendCalls() == 3);
+    QVERIFY(wallet.lockCalls() >= 5);
+    for (const qt_test::ScriptedWallet::Call& call : log) {
+        QVERIFY2(call.thread != gui,
+                 qPrintable(QStringLiteral("a %1 call ran on the GUI thread").arg(MethodName(call.method))));
+    }
 }
 
 void QmlWalletOpGateTests::unlockPassphraseInSecureMemory()
