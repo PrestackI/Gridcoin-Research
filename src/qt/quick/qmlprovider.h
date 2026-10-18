@@ -16,6 +16,8 @@ class ResearcherSummary;
 class ShellAdapter;
 class SplashAdapter;
 class VotingSummary;
+class WalletOpGate;
+class WalletPromptLatch;
 class WalletSummary;
 
 //! The process-wide provider of the module's singletons. It owns them, so they
@@ -47,6 +49,8 @@ public:
     VotingSummary& votingSummary();
     AboutInfo& aboutInfo();
     Clipboard& clipboard();
+    WalletPromptLatch& walletPromptLatch();
+    WalletOpGate& walletOps();
     int marker() const;
 
 private:
@@ -60,6 +64,8 @@ private:
     std::unique_ptr<VotingSummary> m_voting_summary;
     std::unique_ptr<AboutInfo> m_about_info;
     std::unique_ptr<Clipboard> m_clipboard;
+    std::unique_ptr<WalletPromptLatch> m_wallet_prompt_latch;
+    std::unique_ptr<WalletOpGate> m_wallet_ops;
 };
 
 #endif // BITCOIN_QT_QUICK_QMLPROVIDER_H

@@ -12,6 +12,8 @@
 #include <qt/quick/shelladapter.h>
 #include <qt/quick/splashadapter.h>
 #include <qt/quick/votingsummary.h>
+#include <qt/quick/walletopgate.h>
+#include <qt/quick/walletpromptlatch.h>
 #include <qt/quick/walletsummary.h>
 
 #include <atomic>
@@ -37,6 +39,11 @@ QmlProvider::QmlProvider(GuiFrontEnd& frontend)
     m_recent_transactions = std::make_unique<RecentTransactions>(m_marker);
     m_voting_summary = std::make_unique<VotingSummary>(m_marker);
     m_about_info = std::make_unique<AboutInfo>(m_marker);
+    // The wallet-operation gate keeps a reference to the prompt latch, which
+    // the wallet's other passphrase prompts take too in a later change, so
+    // the latch comes first.
+    m_wallet_prompt_latch = std::make_unique<WalletPromptLatch>();
+    m_wallet_ops = std::make_unique<WalletOpGate>(m_marker, *m_wallet_prompt_latch);
 }
 
 QmlProvider::~QmlProvider()
@@ -97,6 +104,16 @@ AboutInfo& QmlProvider::aboutInfo()
 Clipboard& QmlProvider::clipboard()
 {
     return *m_clipboard;
+}
+
+WalletPromptLatch& QmlProvider::walletPromptLatch()
+{
+    return *m_wallet_prompt_latch;
+}
+
+WalletOpGate& QmlProvider::walletOps()
+{
+    return *m_wallet_ops;
 }
 
 int QmlProvider::marker() const

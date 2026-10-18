@@ -15,7 +15,9 @@
 #include <qt/quick/shelladapter.h>
 #include <qt/quick/splashadapter.h>
 #include <qt/quick/votingsummary.h>
+#include <qt/quick/walletopgate.h>
 #include <qt/quick/walletsummary.h>
+#include <qt/walletmodel.h>
 
 #include <QCoreApplication>
 #include <QGuiApplication>
@@ -179,6 +181,7 @@ void QmlFrontEnd::attachModels(const ModelBundle& models)
     m_provider->recentTransactions().attach(models.wallet, models.client.getOptionsModel(), *m_runner);
     m_provider->votingSummary().attach(models.voting, *m_runner);
     m_provider->aboutInfo().attach(models.client, *m_runner);
+    m_provider->walletOps().attach(models.wallet.wallet(), *m_runner);
 }
 
 void QmlFrontEnd::showMain(bool minimized)
@@ -256,6 +259,7 @@ void QmlFrontEnd::detachWallet()
     m_wallet = nullptr;
     m_provider->walletSummary().detach();
     m_provider->recentTransactions().detach();
+    m_provider->walletOps().detach();
 }
 
 void QmlFrontEnd::detachMRC()
