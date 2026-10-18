@@ -94,6 +94,8 @@ qt_add_qml_module(gridcoinqmlapp
         TableHeader.qml
         UnlockDialog.qml
         VersionInfoWindow.qml
+        WalletPromptDialog.qml
+        WalletPrompts.qml
         WindowManager.qml
 )
 

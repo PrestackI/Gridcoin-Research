@@ -105,7 +105,7 @@ void QmlCarriedQmlTests::carriedFilesLoad()
         while (it.hasNext()) files << it.next().mid(prefix.size());
     }
     files.sort();
-    QCOMPARE(files.size(), qsizetype(50));
+    QCOMPARE(files.size(), qsizetype(52));
 
     ProbeSingleton(QStringLiteral("MMPTheme"),
                    "import QtQuick\nimport MMPTheme 1.0\n"
