@@ -5,16 +5,20 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import MMPTheme 1.0
+import Gridcoin.Qml
 
 Rectangle {
     id: main
     color: MMPTheme.backgroundColor
 
-    Connections {
-        target: _sendCoinsController
-        function onCoinsSentOrFailed(message) {
-            _nativeDialog.information(qsTr("Send Coins"), message)
+    // Commits every row's field texts, then asks to send: a field edited
+    // without Return or a focus change has not reached the model yet.
+    function sendAll() {
+        for (var i = 0; i < outputList.count; ++i) {
+            var row = outputList.itemAtIndex(i)
+            if (row) row.commitFields()
         }
+        SendCoins.send()
     }
 
     ColumnLayout {
@@ -63,7 +67,8 @@ Rectangle {
 
                     Text {
                         id: balanceValue
-                        text: _walletModel.balance.toLocaleString(Qt.locale(), 'f', 2)
+                        objectName: "sendBalance"
+                        text: WalletSummary.balanceText
                         color: MMPTheme.highlightColor
                         font.pixelSize: 18
                         font.weight: Font.Medium
@@ -100,9 +105,10 @@ Rectangle {
 
                 ListView {
                     id: outputList
+                    objectName: "recipientList"
                     spacing: 10
                     interactive: false
-                    model: _sendCoinsController.recipients
+                    model: SendCoins.recipients
                     height: contentHeight
                     width: parent.width
 
@@ -112,6 +118,16 @@ Rectangle {
                         width: ListView.view.width
                         implicitHeight: delegateLayout.implicitHeight
                         radius: 4
+
+                        // Writes this row's field texts to the model.
+                        function commitFields() {
+                            SendCoins.updateRecipient(index, {
+                                "recipient": recipientField.text,
+                                "label": labelTextField.text,
+                                "amount": transactionAmountEdit.text,
+                                "message": messageTextField.text
+                            })
+                        }
 
                         ColumnLayout {
                             id: delegateLayout
@@ -139,9 +155,11 @@ Rectangle {
 
                                     TextField {
                                         id: recipientField
-                                        text: modelData.recipient
+                                        objectName: "recipientField"
+                                        text: model.recipient
+                                        color: model.addressValid ? MMPTheme.textColor : MMPTheme.cCarminePink
                                         placeholderText: "Gridcoin Address (eg. bc3NA8e8E3EoTL1qhRmeprbjWcmuoZ26A2)"
-                                        onEditingFinished: _sendCoinsController.updateRecipient(index, {"recipient": text})
+                                        onEditingFinished: SendCoins.updateRecipient(index, {"recipient": text})
                                         Layout.fillWidth: true
                                     }
                                     Button {
@@ -150,26 +168,35 @@ Rectangle {
                                     }
                                     Button {
                                         id: clipboardButton
+                                        objectName: "recipientPaste"
                                         icon.source: MMPTheme.themeSelect("qrc:/icons/buttons/ic_btn_paste_light.svg","qrc:/icons/buttons/ic_btn_paste_dark.svg")
+                                        // Replaces the recipient with the clipboard's text, as the
+                                        // Widgets paste button does; the field follows the model.
+                                        onClicked: SendCoins.updateRecipient(index, {"recipient": Clipboard.text()})
                                     }
                                 }
 
                                 // Row 2
+                                // Only the first row's message is sent, and only while
+                                // the network accepts message contracts.
                                 Text {
                                     id: messageLabel
+                                    visible: index === 0 && SendCoins.messageAllowed
                                     text: qsTr("Message") + ":"
                                     color: MMPTheme.textColor
                                     font.pixelSize: 13
                                     Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
                                 }
                                 RowLayout {
+                                    visible: index === 0 && SendCoins.messageAllowed
                                     Layout.fillWidth: true
                                     spacing: 5
 
                                     TextField {
                                         id: messageTextField
-                                        text: modelData.message
-                                        onEditingFinished: _sendCoinsController.updateRecipient(index, {"message": text})
+                                        objectName: "messageField"
+                                        text: model.message
+                                        onEditingFinished: SendCoins.updateRecipient(index, {"message": text})
                                         Layout.fillWidth: true
                                     }
                                     Button {
@@ -193,8 +220,8 @@ Rectangle {
                                     TextField {
                                         id: labelTextField
                                         placeholderText: qsTr("Add a label to save it to Favourites")
-                                        text: modelData.label
-                                        onEditingFinished: _sendCoinsController.updateRecipient(index, {"label": text})
+                                        text: model.label
+                                        onEditingFinished: SendCoins.updateRecipient(index, {"label": text})
                                         Layout.fillWidth: true
                                     }
                                     Item {
@@ -209,24 +236,28 @@ Rectangle {
                                     }
                                     TextField {
                                         id: transactionAmountEdit
-                                        text: modelData.amount
+                                        objectName: "amountField"
+                                        text: model.amountText
+                                        color: model.amountValid ? MMPTheme.textColor : MMPTheme.cCarminePink
                                         Layout.preferredWidth: 160
-                                        onEditingFinished: _sendCoinsController.updateRecipient(index, {"amount": text})
-                                        validator: DoubleValidator {
-                                            bottom: 0
-                                            top:  _walletModel.balance
-                                            decimals: 8
-                                            notation: DoubleValidator.StandardNotation
-                                            locale: "en_US"
-                                        }
+                                        onEditingFinished: SendCoins.updateRecipient(index, {"amount": text})
                                     }
                                     Text {
                                         id: grcText
-                                        text: qsTr("GRC")
+                                        text: SendCoins.unitName
                                         verticalAlignment: Text.AlignVCenter
                                         color: MMPTheme.textColor
                                         font.pixelSize: 13
                                         Layout.alignment: Qt.AlignVCenter
+                                    }
+                                    CheckBox {
+                                        id: subtractFeeBox
+                                        objectName: "subtractFeeBox"
+                                        text: qsTranslate("SendCoinsEntry", "Subtract fee from amount")
+                                        checked: model.subtractFee
+                                        onCheckedChanged: {
+                                            if (checked !== model.subtractFee) SendCoins.updateRecipient(index, {"subtractFee": checked})
+                                        }
                                     }
                                 }
                             }
@@ -266,7 +297,8 @@ Rectangle {
                                         id: removeButton
                                         icon.source: MMPTheme.themeSelect("qrc:/icons/buttons/ic_btn_remove_light.svg","qrc:/icons/buttons/ic_btn_remove_dark.svg")
                                         text: qsTr("Remove")
-                                        onPressed: _sendCoinsController.removeRecipient(index)
+                                        enabled: outputList.count > 1
+                                        onPressed: SendCoins.removeRecipient(index)
                                     }
                                 }
                             }
@@ -279,7 +311,7 @@ Rectangle {
                     icon.source: MMPTheme.themeSelect("qrc:/icons/buttons/ic_btn_add_light.svg", "qrc:/icons/buttons/ic_btn_add_dark.svg")
                     text: qsTr("New Recipient")
                     anchors.horizontalCenter: parent.horizontalCenter
-                    onClicked: _sendCoinsController.addRecipient()
+                    onClicked: SendCoins.addRecipient()
                 }
             }
         }
@@ -303,7 +335,7 @@ Rectangle {
                     id: removeAllButton
                     icon.source: MMPTheme.themeSelect("qrc:/icons/buttons/ic_btn_remove_light.svg","qrc:/icons/buttons/ic_btn_remove_dark.svg")
                     text: qsTr("Remove All")
-                    onClicked: _sendCoinsController.clearRecipients()
+                    onClicked: SendCoins.clearRecipients()
                 }
                 Button {
                     id: advancedCoinControlButton
@@ -317,13 +349,11 @@ Rectangle {
 
                 Button {
                     id: sendButton
+                    objectName: "sendButton"
                     icon.source: MMPTheme.themeSelect("qrc:/icons/buttons/ic_btn_send_light.svg","qrc:/icons/buttons/ic_btn_send_dark.svg")
                     text: qsTr("Send")
-                    onClicked: {
-                        if (_nativeDialog.question(qsTr("Are you sure?"), qsTr("Are you sure you want to send this transaction?"))) {
-                            _sendCoinsController.sendCoins()
-                        }
-                    }
+                    enabled: !SendCoins.busy
+                    onClicked: main.sendAll()
                 }
             }
         }
