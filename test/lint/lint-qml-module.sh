@@ -75,7 +75,6 @@ LEGACY_ALLOWED=(
     src/qt/qml/EditAddressDialog.qml
     src/qt/qml/ReceiveView.qml
     src/qt/qml/SendView.qml
-    src/qt/qml/UnlockDialog.qml
 )
 OUTPUT=$(git grep -l -E "${LEGACY_PATTERN}" -- src/qt/qml)
 RC=$? # 0: a match, 1: no match, anything else: git grep failed
