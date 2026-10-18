@@ -9,6 +9,7 @@
 #include "qt/optionsmodel.h"
 #include "qt/test/interfacefakes.h"
 #include "qt/test/modelfakes.h"
+#include "qt/unlockscope.h"
 #include "qt/walletmodel.h"
 #include "support/allocators/secure.h"
 #include "util.h"
@@ -266,4 +267,90 @@ void UnlockScopeTests::unlockContextNarrowOkNoRead()
     QCOMPARE(m.wallet.lockStateCalls() - reads_before, 0);
     QCOMPARE(m.wallet.restrictCalls(), 1);
     QCOMPARE(m.wallet.lockCalls(), 0);
+}
+
+void UnlockScopeTests::restoreWalletScope()
+{
+    using Method = qt_test::ScriptedWallet::Method;
+
+    // Relock: the wallet is locked.
+    {
+        qt_test::ScriptedWallet wallet;
+        wallet.setLockState(true, false, false);
+        QCOMPARE(RestoreWalletScope(wallet, true, false, "test"), RestoreOutcome::Relocked);
+        QCOMPARE(wallet.lockCalls(), 1);
+        QCOMPARE(wallet.restrictCalls(), 0);
+    }
+
+    // Restore staking only: the wallet is narrowed, not locked.
+    {
+        qt_test::ScriptedWallet wallet;
+        wallet.setLockState(true, false, false);
+        QCOMPARE(RestoreWalletScope(wallet, false, true, "test"), RestoreOutcome::Narrowed);
+        QCOMPARE(wallet.restrictCalls(), 1);
+        QCOMPARE(wallet.lockCalls(), 0);
+    }
+
+    // The narrowing is refused: still fully unlocked, or locked meanwhile.
+    {
+        qt_test::ScriptedWallet wallet;
+        wallet.setLockState(true, false, false);
+        wallet.scriptRestrict(false);
+        QCOMPARE(RestoreWalletScope(wallet, false, true, "test"), RestoreOutcome::NarrowFailedLeftOpen);
+        QCOMPARE(wallet.lockStateCalls(), 1);
+        QCOMPARE(wallet.lockCalls(), 0);
+    }
+    {
+        qt_test::ScriptedWallet wallet;
+        wallet.setLockState(true, true, false);
+        wallet.scriptRestrict(false);
+        QCOMPARE(RestoreWalletScope(wallet, false, true, "test"), RestoreOutcome::NarrowRefusedLocked);
+        QCOMPARE(wallet.lockStateCalls(), 1);
+        QCOMPARE(wallet.lockCalls(), 0);
+    }
+
+    // Neither flag: no wallet call.
+    {
+        qt_test::ScriptedWallet wallet;
+        wallet.setLockState(true, false, false);
+        QCOMPARE(RestoreWalletScope(wallet, false, false, "test"), RestoreOutcome::Nothing);
+        QCOMPARE(wallet.log().size(), size_t{0});
+    }
+
+    // A std::exception from the wallet: reported as Threw, nothing escapes.
+    {
+        qt_test::ScriptedWallet wallet;
+        wallet.setLockState(true, false, false);
+        wallet.setThrow(Method::LockWallet, qt_test::ScriptedWallet::ThrowKind::Runtime, "lock failed");
+        bool escaped = false;
+        RestoreOutcome outcome = RestoreOutcome::Nothing;
+        try {
+            outcome = RestoreWalletScope(wallet, true, false, "test");
+        } catch (...) {
+            escaped = true;
+        }
+        QVERIFY(!escaped);
+        QCOMPARE(outcome, RestoreOutcome::Threw);
+        QCOMPARE(wallet.lockCalls(), 1);
+    }
+}
+
+void UnlockScopeTests::restoreWalletScopeNonStd()
+{
+    // An exception that is not a std::exception: reported as Threw, nothing
+    // escapes.
+    qt_test::ScriptedWallet wallet;
+    wallet.setLockState(true, false, false);
+    wallet.setThrow(qt_test::ScriptedWallet::Method::RestrictToStakingOnly,
+                    qt_test::ScriptedWallet::ThrowKind::NonStd);
+    bool escaped = false;
+    RestoreOutcome outcome = RestoreOutcome::Nothing;
+    try {
+        outcome = RestoreWalletScope(wallet, false, true, "test");
+    } catch (...) {
+        escaped = true;
+    }
+    QVERIFY(!escaped);
+    QCOMPARE(outcome, RestoreOutcome::Threw);
+    QCOMPARE(wallet.restrictCalls(), 1);
 }

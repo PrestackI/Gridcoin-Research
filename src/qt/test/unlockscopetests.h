@@ -15,8 +15,8 @@
 
 //! The scope a wallet operation's unlock leaves behind: WalletModel's unlock
 //! context, driven through a real WalletModel over a scripted wallet, with a
-//! slot on requireUnlock playing the passphrase dialog. Each test reads the
-//! wallet calls the context made when its scope ended.
+//! slot on requireUnlock playing the passphrase dialog, and RestoreWalletScope
+//! called directly. Each test reads the wallet calls the restore made.
 class UnlockScopeTests : public QObject
 {
     Q_OBJECT
@@ -31,6 +31,9 @@ private Q_SLOTS:
     void unlockContextNonStdThrow();
     void unlockContextNarrowFailsWarnRead();
     void unlockContextNarrowOkNoRead();
+
+    void restoreWalletScope();
+    void restoreWalletScopeNonStd();
 
 private:
     // Suite-wide QSettings redirect (see initTestCase) and what it replaced.

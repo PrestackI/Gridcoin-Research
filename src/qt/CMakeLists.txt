@@ -98,6 +98,7 @@ add_library(gridcoinqt STATIC
     transactiondescdialog.cpp
     transactiontablemodel.cpp
     transactionview.cpp
+    unlockscope.cpp
     updatedialog.cpp
     upgradeqt.cpp
     voting/additionalfieldstableview.cpp
