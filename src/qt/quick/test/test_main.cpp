@@ -14,6 +14,7 @@
 #include "sendadaptertests.h"
 #include "statusadaptertests.h"
 #include "walletopgatetests.h"
+#include "walletpromptqmltests.h"
 
 #include <chainparams.h>
 
@@ -83,6 +84,9 @@ int main(int argc, char* argv[])
 
     QmlSendAdapterTests test11;
     if (QTest::qExec(&test11) != 0) fInvalid = true;
+
+    QmlWalletPromptTests test12;
+    if (QTest::qExec(&test12) != 0) fInvalid = true;
 
     // The test application swallows what its notify() catches; nothing a test
     // did not expect may be left.

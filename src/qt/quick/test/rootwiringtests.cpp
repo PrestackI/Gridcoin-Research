@@ -408,7 +408,8 @@ void QmlRootWiringTests::rootBindsNoLegacyNames()
                             QStringLiteral("CoreMessageWindow.qml"), QStringLiteral("OverviewView.qml"),
                             QStringLiteral("StatusFooter.qml"), QStringLiteral("RecentTransactionItem.qml"),
                             QStringLiteral("AboutWindow.qml"), QStringLiteral("BuildMismatchBanner.qml"),
-                            QStringLiteral("VersionInfoWindow.qml")};
+                            QStringLiteral("VersionInfoWindow.qml"), QStringLiteral("UnlockDialog.qml"),
+                            QStringLiteral("WalletPromptDialog.qml"), QStringLiteral("WalletPrompts.qml")};
     QStringList problems;
     for (const QString& message : std::as_const(g_messages)) {
         for (const QString& file : files) {
