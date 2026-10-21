@@ -108,14 +108,6 @@ public:
     void stop() { m_timer.stop(); }
 
     const std::vector<Box>& boxes() const { return m_boxes; }
-    int count(const QString& title) const
-    {
-        int n = 0;
-        for (const Box& box : m_boxes) {
-            if (box.title == title) ++n;
-        }
-        return n;
-    }
     int unanswered() const
     {
         int n = 0;
@@ -213,6 +205,19 @@ std::vector<int64_t> AcceptedFees(const qt_test::ScriptedWallet& wallet)
 const QString CONFIRM_SEND_TITLE = QStringLiteral("Confirm send coins");
 const QString CONFIRM_FEE_TITLE = QStringLiteral("Confirm transaction fee");
 
+//! Whether a message box's recorded title passes for the expected one. On
+//! macOS, QMessageBox::setWindowTitle does nothing (message boxes there have
+//! no title), so every recorded title is empty: there a title passes when it
+//! is empty or the expected one. Everywhere else it must be the expected one.
+bool TitleMatches(const QString& shown, const QString& expected)
+{
+#ifdef Q_OS_MACOS
+    return shown.isEmpty() || shown == expected;
+#else
+    return shown == expected;
+#endif
+}
+
 QString FeeText(int64_t fee)
 {
     return QCoreApplication::translate("BitcoinGUI",
@@ -300,10 +305,12 @@ void SendFeeNegotiatorTests::sendDialogFeeLoopCharacterization()
 
         QCOMPARE(AcceptedFees(m.wallet), (std::vector<int64_t>{0, FEE}));
         QCOMPARE(boxes.boxes().size(), size_t{2});
-        QCOMPARE(boxes.boxes()[0].title, CONFIRM_SEND_TITLE);
+        QVERIFY2(TitleMatches(boxes.boxes()[0].title, CONFIRM_SEND_TITLE),
+                 qPrintable(QStringLiteral("title \"%1\", expected \"%2\"").arg(boxes.boxes()[0].title, CONFIRM_SEND_TITLE)));
         QVERIFY(boxes.boxes()[0].buttons == QMessageBox::StandardButtons(QMessageBox::Yes | QMessageBox::Cancel));
         QCOMPARE(boxes.boxes()[0].default_button, QMessageBox::Cancel);
-        QCOMPARE(boxes.boxes()[1].title, CONFIRM_FEE_TITLE);
+        QVERIFY2(TitleMatches(boxes.boxes()[1].title, CONFIRM_FEE_TITLE),
+                 qPrintable(QStringLiteral("title \"%1\", expected \"%2\"").arg(boxes.boxes()[1].title, CONFIRM_FEE_TITLE)));
         QVERIFY(boxes.boxes()[1].buttons == QMessageBox::StandardButtons(QMessageBox::Yes | QMessageBox::Cancel));
         QCOMPARE(boxes.boxes()[1].default_button, QMessageBox::Yes);
         QCOMPARE(boxes.boxes()[1].text, FeeText(FEE));
@@ -330,7 +337,10 @@ void SendFeeNegotiatorTests::sendDialogFeeLoopCharacterization()
 
         QCOMPARE(m.wallet.sendCalls(), 1);
         QCOMPARE(boxes.boxes().size(), size_t{2});
-        QCOMPARE(boxes.boxes()[1].title, CONFIRM_FEE_TITLE);
+        QVERIFY2(TitleMatches(boxes.boxes()[1].title, CONFIRM_FEE_TITLE),
+                 qPrintable(QStringLiteral("title \"%1\", expected \"%2\"").arg(boxes.boxes()[1].title, CONFIRM_FEE_TITLE)));
+        QCOMPARE(boxes.boxes()[1].text, FeeText(FEE));
+        QVERIFY(boxes.boxes()[1].buttons == QMessageBox::StandardButtons(QMessageBox::Yes | QMessageBox::Cancel));
 
         dlg.pasteEntry(Recipient(paste_address));
         QCOMPARE(EntryCount(dlg), 2);
@@ -340,7 +350,9 @@ void SendFeeNegotiatorTests::sendDialogFeeLoopCharacterization()
     }
 
     // A fee that keeps rising: ten fee boxes are accepted, the eleventh
-    // request ends the send as a creation failure.
+    // request ends the send as a creation failure. The boxes are told apart
+    // by their order and text: box i (1 to 10) asks for FEE + i - 1, and the
+    // last one is the warning, whose text is compared before its title.
     {
         Models m;
         std::vector<interfaces::SendCoinsResult> results;
@@ -355,12 +367,19 @@ void SendFeeNegotiatorTests::sendDialogFeeLoopCharacterization()
         PressSend(dlg, Address(1));
         boxes.stop();
 
-        QCOMPARE(boxes.count(CONFIRM_FEE_TITLE), 10);
+        QCOMPARE(boxes.boxes().size(), size_t{12});
+        for (int i = 1; i <= 10; ++i) {
+            const ScriptedMessageBoxes::Box& box = boxes.boxes()[static_cast<size_t>(i)];
+            QCOMPARE(box.text, FeeText(FEE + i - 1));
+            QVERIFY2(TitleMatches(box.title, CONFIRM_FEE_TITLE),
+                     qPrintable(QStringLiteral("title \"%1\", expected \"%2\"").arg(box.title, CONFIRM_FEE_TITLE)));
+        }
         QCOMPARE(m.wallet.sendCalls(), 11);
         QVERIFY(!boxes.boxes().empty());
         const ScriptedMessageBoxes::Box& warning = boxes.boxes().back();
-        QCOMPARE(warning.title, QStringLiteral("Send Coins"));
         QCOMPARE(warning.text, QStringLiteral("Error: Transaction creation failed."));
+        QVERIFY2(TitleMatches(warning.title, QStringLiteral("Send Coins")),
+                 qPrintable(QStringLiteral("title \"%1\", expected \"%2\"").arg(warning.title, QStringLiteral("Send Coins"))));
         QVERIFY(warning.buttons == QMessageBox::StandardButtons(QMessageBox::Ok));
         QCOMPARE(warning.default_button, QMessageBox::Ok);
 
@@ -382,7 +401,8 @@ void SendFeeNegotiatorTests::sendDialogFeeLoopCharacterization()
         boxes.stop();
 
         QCOMPARE(boxes.boxes().size(), size_t{2});
-        QCOMPARE(boxes.boxes()[1].title, QStringLiteral("Send Coins"));
+        QVERIFY2(TitleMatches(boxes.boxes()[1].title, QStringLiteral("Send Coins")),
+                 qPrintable(QStringLiteral("title \"%1\", expected \"%2\"").arg(boxes.boxes()[1].title, QStringLiteral("Send Coins"))));
         QCOMPARE(boxes.boxes()[1].text,
                  QStringLiteral("Error: The wallet is unlocked for staking only, so it will not send. "
                                 "Lock the wallet and unlock it again without the staking-only option to send."));
@@ -409,7 +429,8 @@ void SendFeeNegotiatorTests::sendDialogFeeInBalanceText()
     boxes.stop();
 
     QCOMPARE(boxes.boxes().size(), size_t{3});
-    QCOMPARE(boxes.boxes()[2].title, QStringLiteral("Send Coins"));
+    QVERIFY2(TitleMatches(boxes.boxes()[2].title, QStringLiteral("Send Coins")),
+             qPrintable(QStringLiteral("title \"%1\", expected \"%2\"").arg(boxes.boxes()[2].title, QStringLiteral("Send Coins"))));
     QCOMPARE(boxes.boxes()[2].text,
              QCoreApplication::translate("SendCoinsDialog",
                                          "The total exceeds your balance when the %1 transaction fee is included.")
