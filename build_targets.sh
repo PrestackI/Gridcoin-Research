@@ -46,9 +46,9 @@ print_help() {
     echo "                      by SKIP_DEPS=false) and libmultiprocess; depends builds also need"
     echo "                      the depends recipes built with MULTIPROCESS=1."
     echo "  ENABLE_QML=<bool>   Build the QML front end's C++ module and its tests. Options: true, false."
-    echo "                      Default: false. TARGET=native or macos (or all on macOS) only (the"
-    echo "                      depends Qt has no Qt Quick); needs WITH_GUI=true and USE_QT6=true."
-    echo "                      Native installs the Qt Quick packages unless SKIP_DEPS=true."
+    echo "                      Default: false. Needs WITH_GUI=true and USE_QT6=true. Native installs"
+    echo "                      the Qt Quick packages unless SKIP_DEPS=true; the depends and win64"
+    echo "                      targets use the depends Qt, which builds Qt Quick."
     echo "  EXTRA_CMAKE_ARGS    Pass additional arguments to CMake (e.g. '-DBoost_USE_STATIC_LIBS=ON')"
     echo "  CC=<path>           Override C compiler (also read from the CC environment variable)."
     echo "  CXX=<path>          Override C++ compiler (also read from the CXX environment variable)."
@@ -371,13 +371,9 @@ if [[ ! "$TARGET" =~ ^(native|depends|win64|macos|all)$ ]]; then
     exit 1
 fi
 
-# The QML module needs a Qt with Qt Quick. The depends Qt has none, so only the
-# native and macOS targets, which use the system Qt, can build it. TARGET=all
-# is accepted on macOS, where it builds only the macOS target.
-if [ "$ENABLE_QML" = "true" ] && { [[ "$TARGET" =~ ^(depends|win64)$ ]] || { [ "$TARGET" = "all" ] && [ "$(uname -s)" != "Darwin" ]; }; }; then
-    echo "Error: ENABLE_QML=true needs TARGET=native or TARGET=macos (the depends Qt has no Qt Quick)."
-    exit 1
-fi
+# The QML module needs Qt 6 with Qt Quick: the system Qt for the native and
+# macOS targets, and the depends Qt, which builds Qt Quick, for the depends and
+# win64 targets.
 if [ "$ENABLE_QML" = "true" ] && { [ "$WITH_GUI" != "true" ] || [ "$USE_QT6" != "true" ]; }; then
     echo "Error: ENABLE_QML=true needs WITH_GUI=true and USE_QT6=true."
     exit 1
@@ -442,8 +438,8 @@ else
     MULTIPROCESS_CMAKE_FLAG="-DENABLE_MULTIPROCESS=OFF"
 fi
 
-# QML front end module. Passed only to the native and macOS CMake invocations
-# (see the ENABLE_QML target check above).
+# QML front end module. Passed to every target's CMake invocation, as the
+# multiprocess flag is.
 if [ "$ENABLE_QML" = "true" ]; then
     QML_CMAKE_FLAG="-DENABLE_QML=ON"
 else
@@ -632,6 +628,7 @@ if [[ "$TARGET" == "all" || "$TARGET" == "depends" ]] && [[ "$(uname -s)" == "Li
             $DOCS_CMAKE_FLAG \
             $LOCKORDER_CMAKE_FLAG \
             $MULTIPROCESS_CMAKE_FLAG \
+            $QML_CMAKE_FLAG \
             -DUSE_QT6=ON \
             -DSTATIC_LIBS=ON \
             -DENABLE_UPNP=ON \
@@ -730,6 +727,7 @@ if [[ "$TARGET" == "all" || "$TARGET" == "win64" ]] && [[ "$(uname -s)" == "Linu
             $DOCS_CMAKE_FLAG \
             $LOCKORDER_CMAKE_FLAG \
             $MULTIPROCESS_CMAKE_FLAG \
+            $QML_CMAKE_FLAG \
             -DUSE_QT6=ON \
             -DENABLE_UPNP=ON \
             -DENABLE_TESTS=ON \
