@@ -1,19 +1,25 @@
 name: CMake QML Module
 
-# Builds the QML front end's C++ module (src/qt/quick, behind ENABLE_QML, off by
-# default) against Ubuntu 24.04's system Qt 6 and runs test_gridcoin-qt and
-# test_gridcoin-qml. No other workflow sets ENABLE_QML, so this is the only job
-# that compiles the module or runs its tests. The configuration is the
-# Compatibility workflow's Linux Native job plus -DENABLE_QML=ON.
+# Builds the QML front end (src/qt/quick and src/qt/qml, behind ENABLE_QML, off
+# by default) and runs its tests, in two jobs. No other workflow sets
+# ENABLE_QML.
+# - qml-linux builds against Ubuntu 24.04's system Qt 6 and runs
+#   test_gridcoin-qt and test_gridcoin-qml. Its configuration is the
+#   Compatibility workflow's Linux Native job plus -DENABLE_QML=ON.
+# - qml-depends-linux builds against the depends Qt, statically, with the Linux
+#   Static (Depends) release leg's arguments, less its ccache launchers and its
+#   QT_HOST_PATH pair, plus -DENABLE_QML=ON, at this workflow's BUILD_TYPE
+#   (RelWithDebInfo, where the release leg builds Release). It runs
+#   test_gridcoin-qml, checks that gridcoinresearch-qml is hermetic, starts it
+#   once from outside the build tree, and uploads it with gridcoinresearchd.
 
 on:
   # Trigger on any push/PR to any branch (matches production/compatibility workflows)
   push:
     branches:
       - '**'
-    tags:
-      - "v*"
-      - "5.*"
+    # No tag pushes: release builds are cmake_production.yml's, and a tag run
+    # here would only spend runner time and keep artifacts no release uses.
   pull_request:
     branches:
       - '**'
@@ -101,3 +107,171 @@ jobs:
         with:
           path: ~/.ccache
           key: ccache-qml-native-${{ github.sha }}
+
+  qml-depends-linux:
+    name: QML front end, Linux depends Qt (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Dependencies
+        run: |
+          source ./install_dependencies.sh
+          # The depends build's host tools, as the release depends job installs
+          # them, and Xvfb for the start-up check.
+          install_deps all false false
+          sudo apt-get install -y xvfb
+
+      - name: Setup Concurrency
+        run: |
+          if [ -z "$CMAKE_BUILD_PARALLEL_LEVEL" ]; then
+            echo "CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)" >> $GITHUB_ENV
+            echo "CTEST_PARALLEL_LEVEL=$(nproc)" >> $GITHUB_ENV
+            echo "Concurrency: Auto-detected $(nproc) cores."
+          else
+            echo "Concurrency: Limit set externally to $CMAKE_BUILD_PARALLEL_LEVEL."
+          fi
+
+      # The multiprocess workflow's depends entry for this host: the same key
+      # and the same path list, so this job restores what that workflow saved
+      # for the same package files. This job saves nothing.
+      - name: Restore Depends
+        id: cache-depends
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            depends/built
+            depends/work
+            depends/x86_64-pc-linux-gnu
+            depends/sdk-sources
+          key: ubuntu-24.04-depends-mp-x86_64-pc-linux-gnu-${{ hashFiles('depends/packages/*', 'depends/Makefile', 'depends/qt.include') }}
+
+      - name: Build Depends
+        if: steps.cache-depends.outputs.cache-hit != 'true'
+        run: |
+          cd depends
+          make HOST=x86_64-pc-linux-gnu MULTIPROCESS=1 -j${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}
+
+      - name: Configure CMake
+        run: |
+          cmake -B build_qml_depends \
+            --toolchain "$(pwd)/depends/x86_64-pc-linux-gnu/toolchain.cmake" \
+            -DENABLE_GUI=ON \
+            -DUSE_QT6=ON \
+            -DENABLE_UPNP=ON \
+            -DENABLE_MULTIPROCESS=ON \
+            -DENABLE_TESTS=ON \
+            -DENABLE_QML=ON \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DDEP_LIB="$(pwd)/depends/x86_64-pc-linux-gnu/lib" \
+            -DSTATIC_LIBS=ON \
+            -DENABLE_PIE=ON \
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++ -Wl,-Bdynamic"
+
+      - name: Build
+        run: cmake --build build_qml_depends
+
+      - name: Test (test_gridcoin-qml)
+        timeout-minutes: 10
+        working-directory: build_qml_depends/qmltest
+        run: env -u QML_IMPORT_PATH -u QML2_IMPORT_PATH QT_QPA_PLATFORM=offscreen ./test_gridcoin-qml
+
+      # The release leg's hermeticity rule, applied to the QML binary: it may
+      # need only the C library, the maths library and the loader.
+      - name: Verify Hermeticity (gridcoinresearch-qml)
+        run: |
+          ALLOWED='^[[:space:]]*(libc\.so\.[0-9]+|libm\.so\.[0-9]+|ld-linux[-a-z0-9_]*\.so\.[0-9]+)[[:space:]]*$'
+          bin=build_qml_depends/bin/gridcoinresearch-qml
+          if [ ! -f "$bin" ]; then
+            echo "::error::Binary not found at expected path: $bin"
+            exit 1
+          fi
+          NEEDED=$(readelf -d "$bin" 2>/dev/null | grep '(NEEDED)' | sed 's/.*\[//;s/\]//' || true)
+          LEAKS=$(echo "$NEEDED" | grep -vE "$ALLOWED" | grep -v '^$' || true)
+          if [ -n "$LEAKS" ]; then
+            echo "::error::NON-HERMETIC DEPENDENCY DETECTED!"
+            echo "$LEAKS"
+            exit 1
+          fi
+          echo "Verified hermetic. NEEDED: $(echo $NEEDED | tr '\n' ' ')"
+
+      # Starts the static binary once, copied outside the build tree with a
+      # qt.conf beside it whose Prefix names a directory that does not exist,
+      # and with the QML import path variables cleared, so that it cannot
+      # resolve an import from the module files beside the build's binaries or
+      # from the depends prefix's qml directory, only from what is linked into
+      # it. QML_IMPORT_TRACE=1 logs where each import resolved. Its only platform
+      # plugin is xcb, so it runs under xvfb-run. xvfb-run runs its command in
+      # the foreground with stderr folded into stdout, so the inner sh records
+      # the GUI's own pid and sends its stderr to a file. The step fails on the
+      # front end's start-up message, on a root that did not load, or when
+      # "GUI loaded." is not in debug.log within 180 seconds. Either way it
+      # stops the GUI and checks that the GUI and xvfb-run have both exited.
+      - name: Smoke (gridcoinresearch-qml)
+        timeout-minutes: 10
+        run: |
+          mkdir -p "$RUNNER_TEMP/qmlrun" "$RUNNER_TEMP/dd"
+          cp build_qml_depends/bin/gridcoinresearch-qml build_qml_depends/bin/gridcoinresearchd "$RUNNER_TEMP/qmlrun/"
+          printf '%s\n' '[Paths]' "Prefix=$RUNNER_TEMP/noprefix" > "$RUNNER_TEMP/qmlrun/qt.conf"
+          export PIDFILE="$RUNNER_TEMP/gui.pid" ERRFILE="$RUNNER_TEMP/qml.stderr"
+          LOG="$RUNNER_TEMP/dd/regtest/debug.log"
+          xvfb-run -a sh -c 'echo $$ > "$PIDFILE"; exec "$@" 2> "$ERRFILE"' sh env -u QML_IMPORT_PATH -u QML2_IMPORT_PATH QSG_INFO=1 QML_IMPORT_TRACE=1 "$RUNNER_TEMP/qmlrun/gridcoinresearch-qml" -regtest -datadir="$RUNNER_TEMP/dd" -server -debug=qt &
+          WRAPPER=$!
+          result=timeout
+          for i in $(seq 1 180); do
+            if grep -q '^gridcoinresearch-qml: the QML front end' "$ERRFILE" 2>/dev/null; then result=factory; break; fi
+            if grep -q 'did not load' "$LOG" 2>/dev/null; then result=construct; break; fi
+            if grep -q 'GUI loaded\.' "$LOG" 2>/dev/null; then result=loaded; break; fi
+            sleep 1
+          done
+          GUI=$(cat "$PIDFILE" 2>/dev/null || true)
+          echo "result: $result; GUI pid ${GUI:-unknown}; xvfb-run pid $WRAPPER"
+          rc=0
+          if [ "$result" = loaded ]; then
+            "$RUNNER_TEMP/qmlrun/gridcoinresearchd" -regtest -datadir="$RUNNER_TEMP/dd" stop || rc=1
+            stopped=no
+            for i in $(seq 1 60); do
+              if ! kill -0 "$WRAPPER" 2>/dev/null; then stopped=yes; break; fi
+              sleep 1
+            done
+            if [ "$stopped" = yes ]; then
+              wrc=0
+              wait "$WRAPPER" || wrc=$?
+              echo "exit status after stop: $wrc"
+              if [ "$wrc" -ne 0 ]; then rc=1; fi
+            else
+              echo "::error::gridcoinresearch-qml did not exit within 60 seconds of stop"
+              rc=1
+            fi
+          else
+            echo "::error::gridcoinresearch-qml did not start: $result"
+            rc=1
+          fi
+          if [ -n "$GUI" ] && kill -0 "$GUI" 2>/dev/null; then
+            kill "$GUI" 2>/dev/null || true
+            for i in $(seq 1 10); do
+              if ! kill -0 "$GUI" 2>/dev/null; then break; fi
+              sleep 1
+            done
+            if kill -0 "$GUI" 2>/dev/null; then kill -KILL "$GUI" 2>/dev/null || true; fi
+          fi
+          if [ -n "$GUI" ] && kill -0 "$GUI" 2>/dev/null; then echo "GUI pid $GUI still running"; rc=1; else echo "GUI pid ${GUI:-unknown} gone"; fi
+          for i in $(seq 1 15); do
+            if ! kill -0 "$WRAPPER" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          if kill -0 "$WRAPPER" 2>/dev/null; then echo "xvfb-run pid $WRAPPER still running"; rc=1; else echo "xvfb-run pid $WRAPPER gone"; fi
+          echo "--- debug.log GUI lines"
+          grep 'GUI: ' "$LOG" 2>/dev/null || true
+          echo "--- stderr"
+          cat "$ERRFILE" 2>/dev/null || true
+          exit "$rc"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: gridcoinresearch-qml-x86_64-linux-gnu
+          path: |
+            build_qml_depends/bin/gridcoinresearch-qml
+            build_qml_depends/bin/gridcoinresearchd
+          retention-days: 5
