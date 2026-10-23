@@ -114,3 +114,22 @@ qt_add_resources(gridcoinqmlapp "qml_assets"
     BASE assets
     FILES ${GRIDCOIN_QML_ASSETS}
 )
+
+# Against a static Qt, such as the depends build's, the QML plugins of the
+# modules these files import (QtQuick and its controls, among others) are
+# linked only when a CMake call names them, and the engine cannot resolve
+# those imports otherwise. qt_import_qml_plugins scans the QML files in the
+# source directory of the target it is given and links the plugins it finds
+# into that target, INTERFACE for a static library. The scan targets are the
+# Gridcoin.App and MMPTheme libraries, whose QML files live here;
+# gridcoinresearch-qml and test_gridcoin-qml link both and so inherit the
+# plugins. The executable is not a scan target, because its own source
+# directory, src/qt/quick, holds none of these files. The calls are deferred
+# to the end of this directory so that they run after the qmldir writes that
+# qt_add_qml_module defers. A shared Qt loads its plugins from its own install
+# and needs neither call.
+get_target_property(GRIDCOIN_QT_CORE_TYPE ${QT}::Core TYPE)
+if(GRIDCOIN_QT_CORE_TYPE STREQUAL "STATIC_LIBRARY")
+    cmake_language(DEFER CALL qt_import_qml_plugins gridcoinqmlapp)
+    cmake_language(DEFER CALL qt_import_qml_plugins gridcoinqmltheme)
+endif()
