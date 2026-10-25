@@ -1,10 +1,18 @@
 name: CMake QML Module
 
-# Builds the QML front end's C++ module (src/qt/quick, behind ENABLE_QML, off by
-# default) against Ubuntu 24.04's system Qt 6 and runs test_gridcoin-qt and
-# test_gridcoin-qml. No other workflow sets ENABLE_QML, so this is the only job
-# that compiles the module or runs its tests. The configuration is the
-# Compatibility workflow's Linux Native job plus -DENABLE_QML=ON.
+# Builds the QML front end (src/qt/quick and src/qt/qml, behind ENABLE_QML, off
+# by default). No other workflow sets ENABLE_QML, so these are the only jobs
+# that compile the module or run its tests.
+#
+# qml-linux builds against Ubuntu 24.04's system Qt 6 and runs test_gridcoin-qt
+# and test_gridcoin-qml. Its configuration is the Compatibility workflow's Linux
+# Native job plus -DENABLE_QML=ON.
+#
+# qml-macos-arm64 builds against Homebrew's Qt 6 with CMake Production Builds'
+# macOS ARM64 configuration plus -DENABLE_QML=ON, runs test_gridcoin-qml, makes
+# the QML app bundle's DMG with the deploy_qml target, checks that the bundle
+# loads its QML and its libraries from itself, and uploads the DMG as an
+# artifact.
 
 on:
   # Trigger on any push/PR to any branch (matches production/compatibility workflows)
@@ -101,3 +109,248 @@ jobs:
         with:
           path: ~/.ccache
           key: ccache-qml-native-${{ github.sha }}
+
+  # macOS: the QML front end as an app bundle, deployed into its own DMG by the
+  # deploy_qml target (CMake Production Builds' deploy target makes the Widgets
+  # DMG). Homebrew's Qt, as that workflow's macOS ARM64 job uses, plus
+  # qt5compat for the carried QML's effects. There is no cache step: each run
+  # builds without a restored ccache and saves none.
+  qml-macos-arm64:
+    name: QML app bundle (macOS ARM64, Homebrew Qt6)
+    runs-on: macos-15
+    env:
+      MACOS_DEPLOYMENT_TARGET: "15.0"
+      BUILD_TYPE: Release
+      # The workflow-level CCACHE_DIR is a Linux path, which macOS cannot create.
+      CCACHE_DIR: /Users/runner/Library/Caches/ccache
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Dependencies
+        run: |
+          brew update
+          brew info qt5compat
+          # CMake Production Builds' macOS ARM64 job explains this: the image
+          # hand-links a leftover openssl@1.1 that makes the install fail.
+          openssl_link="$(brew --prefix)/bin/openssl"
+          case "$(readlink "$openssl_link" 2>/dev/null)" in
+            */openssl@1.1/bin/openssl) rm -f "$openssl_link" ;;
+          esac
+          source ./install_dependencies.sh
+          # macOS target, Qt 6, GUI, multiprocess, QML packages.
+          install_deps macos true true true true
+
+      - name: Setup Concurrency
+        run: |
+          if [ -z "$CMAKE_BUILD_PARALLEL_LEVEL" ]; then
+            CORES=$(sysctl -n hw.logicalcpu)
+            echo "CMAKE_BUILD_PARALLEL_LEVEL=$CORES" >> $GITHUB_ENV
+            echo "CTEST_PARALLEL_LEVEL=$CORES" >> $GITHUB_ENV
+            echo "Concurrency: Auto-detected $CORES cores."
+          else
+            echo "Concurrency: Limit set externally to $CMAKE_BUILD_PARALLEL_LEVEL."
+          fi
+
+      - name: Set up Python venv for DMG packaging
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/venv"
+          "${RUNNER_TEMP}/venv/bin/pip" install ds_store mac_alias
+
+      # CMake Production Builds' macOS ARM64 configuration plus -DENABLE_QML=ON.
+      - name: Configure CMake
+        run: |
+          QT6_PATH=$(brew --prefix)
+          OPENSSL_ROOT=$(brew --prefix openssl@3)
+          cmake -B build \
+            -DCMAKE_PREFIX_PATH="$QT6_PATH" \
+            -DENABLE_GUI=ON \
+            -DENABLE_QRENCODE=ON \
+            -DENABLE_UPNP=ON \
+            -DENABLE_MULTIPROCESS=ON \
+            -DENABLE_PIE=ON \
+            -DENABLE_TESTS=ON \
+            -DENABLE_DOCS=OFF \
+            -DUSE_QT6=ON \
+            -DENABLE_QML=ON \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ env.MACOS_DEPLOYMENT_TARGET }} \
+            -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT" \
+            -DPython3_EXECUTABLE="${RUNNER_TEMP}/venv/bin/python3" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      # The bundle, the QML tests and the daemon that deploy_qml copies in.
+      - name: Build
+        run: cmake --build build --target gridcoinresearch-qml test_gridcoin-qml gridcoinresearchd
+
+      # As in qml-linux: the import path variables are cleared, so the module
+      # has to resolve through the test binary's own import path.
+      - name: Test (test_gridcoin-qml)
+        timeout-minutes: 10
+        working-directory: build/qmltest
+        run: env -u QML_IMPORT_PATH -u QML2_IMPORT_PATH QT_QPA_PLATFORM=offscreen ./test_gridcoin-qml
+
+      - name: Package (DMG)
+        run: cmake --build build --target deploy_qml
+
+      # The deployed bundle has to load its QML and its libraries from itself.
+      # The checks: its own executable and identifier, the minimal platform
+      # plugin, the QML modules and qt.conf's QmlImports, the daemon in
+      # Contents/Helpers, a strict deep signature check, no library reference
+      # into the Homebrew prefix, no @rpath reference left and no rpath into the
+      # prefix, the measured macOS floor against the declared one, and a regtest
+      # start, stopped through the bundled daemon, that maps no image from the
+      # prefix and whose QML import trace names the bundle's QML directory and
+      # never the prefix.
+      - name: Verify the QML bundle
+        timeout-minutes: 15
+        run: |
+          fail=0
+          BREW=$(brew --prefix)
+          DMG_FILE=$(find build -maxdepth 1 -name "gridcoinresearch-qml-*.dmg")
+          echo "DMG: $DMG_FILE"
+          if [ ! -f "$DMG_FILE" ]; then echo "FAIL: no single gridcoinresearch-qml-*.dmg in build/"; exit 1; fi
+          MNT="$RUNNER_TEMP/qml-dmg"
+          hdiutil attach "$DMG_FILE" -readonly -nobrowse -mountpoint "$MNT"
+          APP="$RUNNER_TEMP/Gridcoin-QML.app"
+          ditto "$MNT/Gridcoin-QML.app" "$APP"
+          hdiutil detach "$MNT"
+
+          exe=$(plutil -extract CFBundleExecutable raw "$APP/Contents/Info.plist")
+          id=$(plutil -extract CFBundleIdentifier raw "$APP/Contents/Info.plist")
+          echo "CFBundleExecutable: $exe"
+          echo "CFBundleIdentifier: $id"
+          if [ "$exe" != gridcoinresearch-qml ] || [ ! -x "$APP/Contents/MacOS/$exe" ]; then echo "FAIL: CFBundleExecutable"; fail=1; fi
+          if [ "$id" != world.gridcoin.Gridcoin-Qt.qml ]; then echo "FAIL: CFBundleIdentifier"; fail=1; fi
+          for f in PlugIns/platforms/libqminimal.dylib Resources/qml/QtQuick/qmldir Resources/qml/Qt5Compat/GraphicalEffects/qmldir Resources/qt.conf; do
+            if [ -f "$APP/Contents/$f" ]; then echo "PASS: $f"; else echo "FAIL: missing $f"; fail=1; fi
+          done
+          if [ -x "$APP/Contents/Helpers/gridcoinresearchd" ]; then echo "PASS: Helpers/gridcoinresearchd"; else echo "FAIL: missing Helpers/gridcoinresearchd"; fail=1; fi
+          if grep -x -F 'QmlImports=Resources/qml' "$APP/Contents/Resources/qt.conf"; then echo "PASS: qt.conf names the bundle's QML"; else echo "FAIL: qt.conf has no QmlImports line"; fail=1; fi
+          echo "QML plugins:"
+          ls "$APP/Contents/PlugIns/quick" || fail=1
+
+          if codesign --verify --deep --strict --verbose=2 "$APP"; then echo "PASS: codesign --verify --deep --strict"; else echo "FAIL: codesign --verify --deep --strict"; fail=1; fi
+
+          machos=0
+          leaks=0
+          rp=0
+          rpb=0
+          while IFS= read -r f; do
+            if file -b "$f" | grep -q 'Mach-O'; then
+              machos=$((machos + 1))
+              n=$(otool -L "$f" | grep -c -F "$BREW/" || true)
+              if [ "$n" != 0 ]; then echo "FAIL: $f names $BREW"; otool -L "$f" || true; leaks=$((leaks + n)); fi
+              r=$(otool -L "$f" | tail -n +2 | grep -c -F '@rpath/' || true)
+              if [ "$r" != 0 ]; then echo "RPATH: $f keeps $r @rpath references"; otool -L "$f" | tail -n +2 | grep -F '@rpath/' || true; rp=$((rp + r)); fi
+              b=$(otool -l "$f" | grep -A2 'cmd LC_RPATH' | grep -c -F "$BREW" || true)
+              if [ "$b" != 0 ]; then echo "RPATH: $f has $b LC_RPATH entries into $BREW"; rpb=$((rpb + b)); fi
+            fi
+          done < <(find "$APP/Contents" -type f)
+          echo "Mach-O files: $machos; references into $BREW: $leaks"
+          echo "Unrelocated @rpath references: $rp; LC_RPATH entries into $BREW: $rpb"
+          if [ "$machos" -lt 10 ] || [ "$leaks" != 0 ] || [ "$rp" != 0 ] || [ "$rpb" != 0 ]; then fail=1; fi
+
+          # The bundle's real macOS floor is the highest LC_BUILD_VERSION minos
+          # among its Mach-O files: dyld refuses a library built for a newer
+          # macOS than the one running, whatever LSMinimumSystemVersion claims.
+          # The loop is CMake Production Builds' macOS ARM64 check.
+          declared=$(plutil -extract LSMinimumSystemVersion raw "$APP/Contents/Info.plist")
+          echo "LSMinimumSystemVersion: $declared"
+          if [ "$declared" != "$MACOS_DEPLOYMENT_TARGET" ]; then echo "FAIL: LSMinimumSystemVersion is not $MACOS_DEPLOYMENT_TARGET"; fail=1; fi
+          find "$APP" -type f > /tmp/bundle-machos.txt
+          worst="0.0"; worstfile=""; measured=0
+          while IFS= read -r macho; do
+            m=$(otool -l "$macho" 2>/dev/null | awk '/LC_BUILD_VERSION/{f=1} f&&/^[[:space:]]*minos/{print $2; exit}')
+            [ -n "$m" ] || continue
+            measured=$((measured + 1))
+            if [ "$m" != "$worst" ] && [ "$(printf '%s\n%s\n' "$worst" "$m" | sort -V | tail -1)" = "$m" ]; then
+              worst="$m"; worstfile="$macho"
+            fi
+          done < /tmp/bundle-machos.txt
+          if [ "$measured" -lt 10 ]; then
+            echo "FAIL: only $measured Mach-O files could be read under $APP;"
+            echo "      this check cannot vouch for the floor, so it does not pretend to."
+            fail=1
+          fi
+          echo "Declared floor: $declared   Measured floor: $worst   ($measured Mach-O files)"
+          if [ "$(printf '%s\n%s\n' "$declared" "$worst" | sort -V | tail -1)" != "$declared" ]; then
+            echo "FAIL: the bundle requires macOS $worst but declares $declared."
+            echo "      Every library at the measured floor:"
+            while IFS= read -r macho; do
+              m=$(otool -l "$macho" 2>/dev/null | awk '/LC_BUILD_VERSION/{f=1} f&&/^[[:space:]]*minos/{print $2; exit}')
+              [ "$m" = "$worst" ] && echo "        $m  ${macho#$APP/}"
+            done < /tmp/bundle-machos.txt
+            fail=1
+          else
+            echo "PASS: every shipped library honours the declared $declared floor (worst: ${worstfile#$APP/})"
+          fi
+
+          DD="$RUNNER_TEMP/dd"
+          mkdir -p "$DD"
+          ERR="$RUNNER_TEMP/qml-stderr.txt"
+          LOG="$DD/regtest/debug.log"
+          env -u QML_IMPORT_PATH -u QML2_IMPORT_PATH QT_QPA_PLATFORM=minimal QT_QUICK_BACKEND=software QML_IMPORT_TRACE=1 QT_FORCE_STDERR_LOGGING=1 "$APP/Contents/MacOS/gridcoinresearch-qml" -regtest -datadir="$DD" -server -debug=qt 2> "$ERR" &
+          GUI=$!
+          result=timeout
+          for i in $(seq 1 180); do
+            if grep -q -F 'GUI loaded.' "$LOG" 2>/dev/null; then result=loaded; break; fi
+            if grep -q '^gridcoinresearch-qml: the QML front end' "$ERR"; then result=factory; break; fi
+            if grep -q -F 'did not load' "$LOG" 2>/dev/null; then result=construct; break; fi
+            sleep 1
+          done
+          echo "Smoke: $result after $i s"
+          if [ "$result" = loaded ]; then
+            # The images the running GUI has mapped (lsof's txt descriptors, so
+            # an ordinary open file does not count): none may come from the
+            # prefix, and a listing that names no image from the bundle's own
+            # Frameworks proves nothing.
+            images=$(lsof -a -p "$GUI" -d txt -Fn 2>/dev/null | grep -c '^n' || true)
+            own=$(lsof -a -p "$GUI" -d txt -Fn 2>/dev/null | grep -c -F "n$APP/Contents/Frameworks/" || true)
+            mapped=$(lsof -a -p "$GUI" -d txt -Fn 2>/dev/null | grep -c -F "n$BREW/" || true)
+            echo "Images mapped by the GUI: $images; from the bundle's Frameworks: $own; under $BREW: $mapped"
+            if [ "$mapped" != 0 ]; then lsof -a -p "$GUI" -d txt -Fn 2>/dev/null | grep -F "n$BREW/" || true; fi
+            if [ "$own" = 0 ] || [ "$mapped" != 0 ]; then fail=1; fi
+            "$APP/Contents/Helpers/gridcoinresearchd" -regtest -datadir="$DD" stop || fail=1
+            gone=no
+            for i in $(seq 1 60); do
+              if ! kill -0 "$GUI" 2>/dev/null; then gone=yes; break; fi
+              sleep 1
+            done
+            rc=0
+            if [ "$gone" = yes ]; then wait "$GUI" || rc=$?; echo "GUI exit status: $rc"; else echo "FAIL: the GUI did not exit within 60 s of stop"; kill -KILL "$GUI" || true; rc=1; fi
+            if [ "$rc" != 0 ]; then fail=1; fi
+          else
+            fail=1
+            kill "$GUI" 2>/dev/null || true
+            gone=no
+            for i in $(seq 1 10); do
+              if ! kill -0 "$GUI" 2>/dev/null; then gone=yes; break; fi
+              sleep 1
+            done
+            echo "After kill, the GUI was gone within 10 s: $gone"
+            if [ "$gone" != yes ]; then kill -KILL "$GUI" || true; fi
+          fi
+          if grep -q 'Could not find the Qt platform plugin' "$ERR"; then echo "NOTE: a missing platform plugin, not a QML import failure"; fi
+          # Qt 6's import trace (the qt.qml.import category) lands in stderr
+          # before the GUI installs its message handler and as GUI: lines in
+          # debug.log after; these message stems match it in both.
+          trace_re='addImportPath:|addLibraryImport:|addFileImport:|importExtension:|locateLocalQmldir:|resolvePlugin'
+          trace_lines=$(cat "$ERR" "$LOG" 2>/dev/null | grep -c -E "$trace_re" || true)
+          brew_lines=$(cat "$ERR" "$LOG" 2>/dev/null | grep -E "$trace_re" | grep -c -F "$BREW/" || true)
+          qml_lines=$(cat "$ERR" "$LOG" 2>/dev/null | grep -E 'importExtension:|locateLocalQmldir:' | grep -c -F 'Resources/qml' || true)
+          echo "QML import trace lines: $trace_lines; naming $BREW/: $brew_lines; naming Resources/qml: $qml_lines"
+          if [ "$trace_lines" = 0 ]; then echo "FAIL: no QML import trace"; fail=1; fi
+          if [ "$brew_lines" != 0 ] || [ "$qml_lines" = 0 ]; then fail=1; fi
+          echo "debug.log GUI lines:"
+          grep -F 'GUI: ' "$LOG" || true
+          echo "stderr:"
+          cat "$ERR" || true
+          exit $fail
+
+      - name: Upload the QML DMG
+        uses: actions/upload-artifact@v5
+        with:
+          name: gridcoinresearch-qml-macos-arm64
+          path: build/gridcoinresearch-qml-*.dmg
+          retention-days: 5
