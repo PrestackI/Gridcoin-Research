@@ -16,7 +16,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-import sys, re, os, platform, shutil, stat, subprocess, os.path, time
+import sys, re, os, platform, shutil, stat, subprocess, os.path, time, json
 from argparse import ArgumentParser
 try:
     from ds_store import DSStore
@@ -153,10 +153,11 @@ class FrameworkInfo(object):
         return info
 
 class ApplicationBundleInfo(object):
-    def __init__(self, path: str):
+    def __init__(self, path: str, binaryName: str = "gridcoinresearch"):
         self.path = path
-        # for backwards compatibility reasons, this must remain as gridcoinresearch
-        self.binaryPath = os.path.join(path, "Contents", "MacOS", "gridcoinresearch")
+        # The default must remain gridcoinresearch, for backwards compatibility;
+        # -binary names another executable (gridcoinresearch-qml).
+        self.binaryPath = os.path.join(path, "Contents", "MacOS", binaryName)
         if not os.path.exists(self.binaryPath):
             raise RuntimeError(f"Could not find bundle binary for {path}")
         self.resourcesPath = os.path.join(path, "Contents", "Resources")
@@ -249,6 +250,21 @@ def resolveRpath(line: str, rpaths: List[str], binaryPath: str) -> Optional[str]
                 return f"  {path}{version_info}"
     return None
 
+def hasInstallId(binaryPath: str) -> bool:
+    """Whether a Mach-O binary has an install id (LC_ID_DYLIB).
+
+    A dylib or a framework binary has one, and objdump --dylibs-used lists it
+    first. An executable or a plugin (a Mach-O bundle) has none, so its first
+    line is a real dependency. otool -D prints a header line ending in a
+    colon (one per architecture in a universal file), each followed by the id
+    when there is one; when otool fails, the binary is taken to have none.
+    """
+    output = run(["otool", "-D", binaryPath], stdout=PIPE, stderr=PIPE, text=True)
+    if output.returncode != 0:
+        return False
+    return any(line.strip() != "" and not line.rstrip().endswith(":")
+               for line in output.stdout.splitlines()[1:])
+
 def getFrameworks(binaryPath: str, verbose: int) -> List[FrameworkInfo]:
     objdump = os.getenv("OBJDUMP", "objdump")
     if verbose:
@@ -261,8 +277,11 @@ def getFrameworks(binaryPath: str, verbose: int) -> List[FrameworkInfo]:
 
     lines = output.stdout.split("\n")
     lines.pop(0) # First line is the inspected binary
-    if ".framework" in binaryPath or binaryPath.endswith(".dylib"):
-        lines.pop(0) # Frameworks and dylibs list themselves as a dependency.
+    if hasInstallId(binaryPath):
+        # A dylib or a framework lists its own install id first. A plugin is a
+        # Mach-O bundle with no install id, whatever its file name ends with,
+        # so its first line is a real dependency and stays.
+        lines.pop(0)
 
     # Extract rpaths for resolving @rpath references
     rpaths = getRpaths(binaryPath, verbose)
@@ -557,7 +576,11 @@ def deployPlugins(appBundleInfo: ApplicationBundleInfo, deploymentInfo: Deployme
         if strip:
             runStrip(destinationPath, verbose)
 
-        dependencies = getFrameworks(destinationPath, verbose)
+        # Read the dependencies from Qt's copy, as deployFrameworks reads each
+        # framework's original: a plugin's @loader_path rpath is written for
+        # Qt's own layout, so it resolves from Qt's copy and not from the copy
+        # in the bundle.
+        dependencies = getFrameworks(sourcePath, verbose)
 
         for dependency in dependencies:
             changeInstallName(dependency.installName, dependency.deployedInstallName, destinationPath, verbose)
@@ -565,6 +588,139 @@ def deployPlugins(appBundleInfo: ApplicationBundleInfo, deploymentInfo: Deployme
             # Deploy framework if necessary.
             if dependency.frameworkName not in deploymentInfo.deployedFrameworks:
                 deployFrameworks([dependency], appBundleInfo.path, destinationPath, strip, verbose, deploymentInfo)
+
+def findQtPaths() -> str:
+    """The qtpaths tool: QTPATHS if it is set, else qtpaths6 or qtpaths on PATH,
+    in the order CMake's deploy targets search for it."""
+    qtpaths = os.getenv("QTPATHS")
+    if qtpaths:
+        return qtpaths
+    for name in ["qtpaths6", "qtpaths"]:
+        found = shutil.which(name)
+        if found:
+            return found
+    raise RuntimeError("Could not find qtpaths (set QTPATHS)")
+
+def queryQtPath(qtpaths: str, name: str) -> str:
+    try:
+        output = run([qtpaths, "--query", name], stdout=PIPE, stderr=PIPE, text=True)
+    except OSError as e:
+        raise RuntimeError(f"Could not run {qtpaths}: {e}")
+    value = output.stdout.strip()
+    if output.returncode != 0 or value == "":
+        raise RuntimeError(f"{qtpaths} --query {name} failed with return code {output.returncode}")
+    return value
+
+def deployQmlImports(appBundleInfo: ApplicationBundleInfo, deploymentInfo: DeploymentInfo, qmlDir: str, strip: bool, verbose: int):
+    """Deploy the QML modules that the QML sources under qmlDir import.
+
+    qmlimportscanner (in qtpaths' QT_HOST_LIBEXECS) lists the imports against
+    qtpaths' QT_INSTALL_QML. Each module directory it resolves is copied into
+    Contents/Resources/qml, which qt.conf's QmlImports names. A module inside a
+    directory already copied is not copied again, and a module with no
+    directory (one built into the binary, or one that is not installed) is
+    reported and skipped. Each plugin dylib in a copied directory moves to
+    Contents/PlugIns/quick, where the signing step signs it with the other
+    plugins, and a relative symlink to it stays in its module directory. Its
+    dependencies are read from its copy under Qt's QML directory, at the path
+    the scanner reports and not its realpath (its @loader_path rpath is written
+    for Qt's layout), and deployed as a plugin's are.
+    """
+    if not os.path.isdir(qmlDir):
+        raise RuntimeError(f"Could not find the QML directory {qmlDir}")
+    qtpaths = findQtPaths()
+    importPath = queryQtPath(qtpaths, "QT_INSTALL_QML")
+    scanner = os.path.join(queryQtPath(qtpaths, "QT_HOST_LIBEXECS"), "qmlimportscanner")
+    if not os.path.exists(scanner):
+        raise RuntimeError(f"Could not find qmlimportscanner at {scanner}")
+    output = run([scanner, "-rootPath", qmlDir, "-importPath", importPath], stdout=PIPE, stderr=PIPE, text=True)
+    if output.returncode != 0:
+        sys.stderr.write(output.stderr)
+        sys.stderr.flush()
+        raise RuntimeError(f"qmlimportscanner failed with return code {output.returncode}")
+    try:
+        imports = json.loads(output.stdout)
+    except ValueError as e:
+        raise RuntimeError(f"qmlimportscanner printed no JSON list: {e}")
+
+    qmlDestination = os.path.join(appBundleInfo.resourcesPath, "qml")
+    quickPluginDirectory = os.path.join(appBundleInfo.pluginPath, "quick")
+    deployed = []
+    for entry in sorted(imports, key=lambda e: e.get("relativePath", "")):
+        if entry.get("type") != "module":
+            continue
+        name = entry.get("name", "")
+        sourcePath = entry.get("path", "")
+        relativePath = entry.get("relativePath", "")
+        if sourcePath == "" or relativePath == "":
+            print(f"Skipping QML import {name} (no module directory: built into the binary, or not installed)")
+            continue
+        if any(relativePath == d or relativePath.startswith(d + "/") for d in deployed):
+            if verbose:
+                print(f"QML import {name} is inside a module directory already deployed")
+            continue
+        print("Processing QML import", name, "...")
+        destinationPath = os.path.join(qmlDestination, relativePath)
+        shutil.copytree(sourcePath, destinationPath, ignore=shutil.ignore_patterns("*.dSYM"))
+        deployed.append(relativePath)
+
+        for dirpath, dirnames, filenames in os.walk(destinationPath):
+            for filename in sorted(filenames):
+                if not filename.endswith(".dylib"):
+                    continue
+                inModulePath = os.path.join(dirpath, filename)
+                installedPath = os.path.join(sourcePath, os.path.relpath(inModulePath, destinationPath))
+                pluginPath = os.path.join(quickPluginDirectory, filename)
+                if os.path.lexists(pluginPath):
+                    raise RuntimeError(f"Two QML plugins share the name {filename}")
+                os.makedirs(quickPluginDirectory, exist_ok=True)
+                shutil.move(inModulePath, pluginPath)
+                os.symlink(os.path.relpath(pluginPath, dirpath), inModulePath)
+                if verbose:
+                    print("Moved:", inModulePath)
+                    print(" to:", pluginPath)
+
+                if strip:
+                    runStrip(pluginPath, verbose)
+
+                for dependency in getFrameworks(installedPath, verbose):
+                    changeInstallName(dependency.installName, dependency.deployedInstallName, pluginPath, verbose)
+                    if dependency.frameworkName not in deploymentInfo.deployedFrameworks:
+                        deployFrameworks([dependency], appBundleInfo.path, pluginPath, strip, verbose, deploymentInfo)
+
+MACHO_MAGICS = {bytes.fromhex(m) for m in ("feedface", "cefaedfe", "feedfacf", "cffaedfe", "cafebabe", "bebafeca")}
+
+def isMachO(path: str) -> bool:
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) in MACHO_MAGICS
+    except OSError:
+        return False
+
+def deleteBuildRpaths(appBundleInfo: ApplicationBundleInfo, verbose: int):
+    """Delete every absolute LC_RPATH entry from the bundle's Mach-O files.
+
+    The linker records build-machine directories as absolute rpaths: Homebrew's
+    lib in the executables, a keg's own lib in some Homebrew libraries. Once
+    every library reference points into the bundle they serve nothing, and
+    while they remain, an @rpath reference left unrelocated can still resolve
+    through them on a machine that has those directories. Rpaths relative to
+    @loader_path or @executable_path stay. Symlinks are skipped, so each file
+    is read once, and each distinct rpath is passed to install_name_tool
+    -delete_rpath once.
+    """
+    contents = os.path.join(appBundleInfo.path, "Contents")
+    for dirpath, dirnames, filenames in os.walk(contents):
+        dirnames.sort()
+        for filename in sorted(filenames):
+            path = os.path.join(dirpath, filename)
+            if os.path.islink(path) or not isMachO(path):
+                continue
+            for rpath in dict.fromkeys(getRpaths(path, verbose)):
+                if rpath.startswith("@"):
+                    continue
+                print(f"Deleting the build-time rpath {rpath} from {path}")
+                runInstallNameTool("delete_rpath", rpath, path)
 
 ap = ArgumentParser(description="""Improved version of macdeployqt.
 
@@ -586,6 +742,11 @@ ap.add_argument("-sign", nargs="?", const="-", default=None, metavar="identity",
          "Use without value for ad-hoc ('-').")
 ap.add_argument("-entitlements", nargs=1, default=None, metavar="path",
     help="Path to entitlements plist for hardened runtime signing")
+ap.add_argument("-binary", nargs=1, metavar="name", default=["gridcoinresearch"],
+    help="Name of the bundle's executable in Contents/MacOS (default: gridcoinresearch)")
+ap.add_argument("-qmldir", nargs=1, metavar="path", default=None,
+    help="Deploy the QML modules that the QML sources under this directory import "
+         "(found with qmlimportscanner), and point qt.conf's QmlImports at them")
 
 config = ap.parse_args()
 
@@ -630,7 +791,11 @@ if os.path.exists(dmg_basename + ".temp.dmg"):
 
 # ------------------------------------------------
 
-target = os.path.join("dist", "Gridcoin.app")
+binary_name = config.binary[0]
+# The Widgets bundle keeps its historical name; another binary's bundle is
+# named after the app.
+bundle_name = "Gridcoin.app" if binary_name == "gridcoinresearch" else f"{appname}.app"
+target = os.path.join("dist", bundle_name)
 
 print("+ Copying source bundle +")
 if verbose:
@@ -639,7 +804,11 @@ if verbose:
 os.mkdir("dist")
 shutil.copytree(app_bundle, target, symlinks=True)
 
-applicationBundle = ApplicationBundleInfo(target)
+try:
+    applicationBundle = ApplicationBundleInfo(target, binary_name)
+except RuntimeError as e:
+    sys.stderr.write(f"Error: {str(e)}\n")
+    sys.exit(1)
 
 # ------------------------------------------------
 
@@ -701,11 +870,30 @@ if config.translations_dir:
 
 # ------------------------------------------------
 
+if config.qmldir is not None:
+    print("+ Deploying QML imports +")
+    try:
+        deployQmlImports(applicationBundle, deploymentInfo, config.qmldir[0], config.strip, verbose)
+    except RuntimeError as e:
+        sys.stderr.write(f"Error: {str(e)}\n")
+        sys.exit(1)
+
+# ------------------------------------------------
+
+# The references the deployment resolved now point into the bundle, so the
+# build machine's absolute rpaths go, before the .DS_Store and the signing step.
+deleteBuildRpaths(applicationBundle, verbose)
+
+# ------------------------------------------------
+
 print("+ Installing qt.conf +")
 
 qt_conf="""[Paths]
 Translations=Resources
 Plugins=PlugIns
+"""
+if config.qmldir is not None:
+    qt_conf += """QmlImports=Resources/qml
 """
 
 with open(os.path.join(applicationBundle.resourcesPath, "qt.conf"), "wb") as f:
@@ -751,7 +939,7 @@ if HAS_DS_STORE:
     ds['.']['vSrn'] = ('long', 1)
 
     ds['Applications']['Iloc'] = (370, 156)
-    ds['Gridcoin.app']['Iloc'] = (128, 156)
+    ds[bundle_name]['Iloc'] = (128, 156)
 
     ds.flush()
     ds.close()
@@ -806,7 +994,7 @@ if config.sign is not None and platform.system() == "Darwin":
                 codesignItem(item_path, identity, entitlements_path, hardened, verbose)
 
     # 4. Sign the main executable (with entitlements)
-    main_binary = os.path.join(target, "Contents", "MacOS", "gridcoinresearch")
+    main_binary = applicationBundle.binaryPath
     codesignItem(main_binary, identity, entitlements_path, hardened, verbose)
 
     # 5. Sign the top-level app bundle (with entitlements)
