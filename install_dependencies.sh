@@ -456,12 +456,22 @@ install_deps() {
     # on the QML runtime modules, so each module is listed. The carried QML's
     # effects also need the Qt5Compat GraphicalEffects module, whose types do
     # not load without Qt Shader Tools. Debian, Ubuntu and Linux Mint get both
-    # below; on every other system, macOS included, a QML build installs them
-    # by hand, because one wrong package name would fail that system's whole
-    # install and no CI job runs those branches.
+    # below, and so does macOS: Homebrew's qt5compat formula depends on its
+    # qtshadertools, and CMake QML Module's qml-macos-arm64 job installs through
+    # this branch. On every other system a QML build installs them by hand,
+    # because one wrong package name would fail that system's whole install and
+    # no CI job runs those branches.
     if [[ "$ENABLE_QML" == "true" ]]; then
         echo "QML front end requested: adding the Qt Quick packages."
         case $OS in
+            macos)
+                # PKGS_QT is installed on macOS for any GUI build, Qt 5 included,
+                # so only a Qt 6 build, the only one that can set ENABLE_QML,
+                # adds it. qtdeclarative is already in the Qt 6 subset above.
+                if [[ "$USE_QT6" == "true" ]]; then
+                    append_qt qt5compat
+                fi
+                ;;
             debian|ubuntu|linuxmint)
                 append_qt qt6-declarative-dev qt6-declarative-dev-tools
                 append_qt qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts \

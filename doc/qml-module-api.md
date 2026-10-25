@@ -27,8 +27,9 @@ names later changes will add.
   `qml6-module-qtqml-models`. Three carried files import `Qt5Compat.GraphicalEffects`
   (section 8), whose types do not load without Qt Shader Tools.
 - `install_dependencies.sh` with `ENABLE_QML=true` installs the Qt5Compat GraphicalEffects
-  module only on Debian, Ubuntu and Linux Mint. On every other system a QML build installs
-  it, with Qt Shader Tools, by hand.
+  module only on Debian, Ubuntu, Linux Mint and macOS (Homebrew's `qt5compat`, which brings
+  Qt Shader Tools with it). On every other system a QML build installs it, with Qt Shader
+  Tools, by hand.
 - `gridcoinresearch-qml` compiles its QML root at start, before it opens its log or connects
   to a daemon, and exits with a message naming what failed when the root does not compile;
   when the Qt5Compat effects module is the cause, the message says so.
