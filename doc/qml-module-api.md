@@ -185,6 +185,60 @@ check.
 | `hideMainRequested()` | signal | The first step of the detach: the root hides every window it shows, not only the main window. Qt's quit closes none of them, and the GUI thread pumps no events for the rest of the teardown. `QmlFrontEnd::hideMain()` then hides any top-level window still visible. |
 | `hideToTrayRequested()` | signal | Emitted by `requestClose()` when it hides to the tray. |
 
+On the C++ side, `ShellAdapter::setWindowOptions(minimizeToTray, minimizeOnClose,
+confirmOnClose)` stores the three window options; `Settings` calls it at attach and after
+each Apply. Only minimise-on-close is read today, by `requestClose()`.
+
+### `Settings` (singleton)
+
+The settings screen's options. Each staged property shows a value the user may still
+change: a write stages it (a write of the value already staged does nothing), `apply()`
+submits the staged values, and `discard()` drops them. A seed (the stored values, read
+again) is copied into every property that is not staged, or whose staged value equals the
+previous seed.
+
+| Name | Kind | Meaning |
+|---|---|---|
+| `marker` | property, constant | As for `Shell`. |
+| `startAtStartup`, `startAtStartupMinimized` | properties, bool | The login item and its minimised start. Never submitted while `startupOptionsAvailable` is false. Lane: none (the options model's getters). |
+| `disableUpdateCheck`, `enableStaking`, `enableStakeSplit`, `enableSideStaking`, `contractChangeToInput` | properties, bool | The node's settings of those names. Lane: serial (the seed). |
+| `stakingEfficiency`, `minStakeSplitValue` | properties, string | Whole numbers as text; checked on Apply only while `enableStakeSplit` is staged true (75 to 98, and 800 GRC up to the money supply), and otherwise put back to the seed. Lane: serial. |
+| `reserveBalance` | property, string | The reserve in the staged display unit. Staged as halfords; a text that does not parse, or a negative amount, is refused on Apply. Lane: serial. |
+| `mapPortUpnp` | property, bool | Lane: none (`OptionsModel::data`, a node read). |
+| `proxyUse`, `proxyIp`, `proxyPort` | properties, bool, string, int | The proxy; the address and the port (1 to 65535) are checked on Apply only while `proxyUse` is staged true, and otherwise put back to the seed and not submitted. Lane: none. |
+| `minimizeToTray`, `minimizeOnClose`, `confirmOnClose` | properties, bool | The window options pushed to `Shell`. Lane: none. |
+| `disableTrxNotifications`, `disablePollNotifications`, `displayAddresses`, `coinControlFeatures` | properties, bool | Lane: none. |
+| `displayUnit` | property, int | A `displayUnits` value. Staging it formats `reserveBalance` again. Lane: none. |
+| `language` | property, string | A `languages` value; "" is the system default. Lane: none. |
+| `theme` | property, string | "dark" or "light", the stored stylesheet. Lane: none. |
+| `loaded` | property, bool | A seed has been delivered since the last attach. |
+| `seedGeneration` | property, int | Counts the delivered seeds. |
+| `dirty` | property, bool | A staged value differs from its seed. |
+| `restartRequired` | property, bool | A proxy or language change was saved; it takes effect after a restart. |
+| `lastError` | property, string | The first refusal of the last Apply or open, in `OptionsDialog`'s or `BitcoinGUI`'s words. |
+| `appliedTheme` | property, string | The stored theme, set at attach and when the stored theme changes; the root's `MMPTheme` follows it. Empty before the first attach. |
+| `trayAvailable`, `startupOptionsAvailable`, `updateCheckOptionAvailable`, `upnpAvailable`, `confirmOnCloseAvailable`, `hostPathsAvailable` | properties, bool | Whether each control applies here: a system tray; the login item (always false in this front end); mainnet; UPnP compiled in; not macOS; the config file path is known. |
+| `languages`, `displayUnits` | properties, constant | Lists of `{value, text}`: the default and each translation the resources hold, as `OptionsDialog` lists them; the display units. |
+| `sideStakes` | property, constant | The sidestake list model, below. |
+| `apply()` | invokable | Checks every staged value; when a check fails it submits nothing, sets `lastError` and returns false. Otherwise it submits each staged value that differs from its seed through `OptionsModel::setData`, in the options model's order: a row the model refuses keeps its text in `lastError`, the rest are still submitted, and the call returns false. Then it drops the staged values and reads the seed again. Lane: none (the GUI thread). |
+| `discard()` | invokable | Puts every property back to its seed. Lane: none. |
+| `reload()` | invokable | Reads the seed again. Lane: serial. |
+| `openConfigFile()` | invokable | Opens the config file in the system's handler, as `BitcoinGUI` does; false, with `lastError`, when nothing opened it. Lane: none. |
+| `changed`, `loadedChanged`, `seedGenerationChanged`, `restartRequiredChanged`, `lastErrorChanged`, `appliedThemeChanged` | signals | The matching properties changed (`changed` for every staged property and `dirty`). |
+
+`Settings.sideStakes` is a list model over `SideStakeTableModel`, reset whenever the table's
+layout changes. Lane: none for all of it: each call below is a `SideStakeTableModel` call on
+the GUI thread.
+
+| Name | Kind | Meaning |
+|---|---|---|
+| `address`, `allocationText`, `allocation`, `description`, `status`, `mandatory`, `editable` | roles | One sidestake; `editable` is false for a mandatory one. |
+| `add(address, allocation, description)` | invokable | Adds a local sidestake; false, with `lastError`, when the table refuses it. |
+| `edit(row, allocation, description)` | invokable | Edits a local sidestake, as `EditSideStakeDialog` does; a mandatory row is refused before any edit reaches the table. |
+| `remove(row)` | invokable | Removes a local sidestake; a mandatory row is refused with `lastError` set; a delete the table refuses returns false with `lastError` empty, as the Options dialog's delete shows nothing. |
+| `refresh()` | invokable | Reads the table again. |
+| `lastError` | property, string | The last refusal of an add or edit (`EditSideStakeDialog`'s text for the table's answer) or the mandatory-row refusal; empty after a delete the table refuses. |
+
 ### `Splash` (singleton)
 
 | Name | Kind | Meaning |
@@ -305,6 +359,18 @@ Added by `RecentTransactions` (through `OverviewTxModel`):
 `setViewLimit` runs on the serial lane. Under `-multiprocess` each call above is an IPC
 round trip on the GUI thread.
 
+Added by `Settings`:
+
+- `OptionsModel::setData` on Apply, with the `getSetting*` and `changeSettings` calls it
+  makes for the node's settings.
+- The seed's `OptionsModel::data` read of the UPnP row (`getSettingBool("upnp")`).
+- The `updateCheckOptionAvailable` read (`isMainNet()`).
+- The `SideStakeTableModel` calls behind `Settings.sideStakes` that reach the node
+  (`addRow`, `setData`, `removeRows` and `refresh`); its reads come from the table's
+  cached snapshot.
+
+Each is an IPC round trip on the GUI thread under `-multiprocess`.
+
 ## 5. Request, signal, answer
 
 Every prompt follows one shape. QML calls a `Q_INVOKABLE` request that returns at once with
@@ -355,7 +421,7 @@ The audited model methods, each with what it calls and stores:
 
 A lazy fill of a cache still at -1 runs on the serial thread too, so once per process, at start-up, it can race with `ClientModel::updateNumBlocks` storing a value on the GUI thread; each store is one atomic store, and the value kept may be older or newer than the one it replaced.
 
-Coalescing. Each adapter has at most one read of a kind in flight; a trigger that arrives meanwhile is remembered, and the read's delivery posts it again once. This holds for the scraper snapshot on the pooled lane, for the status, poll-title and limit reads on the serial lane, and for `AboutInfo.refreshUpdateCheck()`'s node read. A read's in-flight state is cleared only by its delivery, or by a new attach, whose earlier reads never deliver.
+Coalescing. Each adapter has at most one read of a kind in flight; a trigger that arrives meanwhile is remembered, and the read's delivery posts it again once. This holds for the scraper snapshot on the pooled lane, for the status, poll-title and limit reads on the serial lane, for `AboutInfo.refreshUpdateCheck()`'s node read, and for the `Settings` seed, which runs on the serial lane (a `reload()` or settings notification while one is in flight posts one more). A read's in-flight state is cleared only by its delivery, or by a new attach, whose earlier reads never deliver; the `Settings` seed's is also cleared by a detach.
 
 The update check. `AboutInfo.checkForUpdate()` runs `checkForLatestUpdate` on the pooled lane. When it returns no version, the same closure re-reads the node's `disableupdatecheck` setting, so a setting changed at run time is reported as the configuration reason, not as a network failure. Each About open calls `AboutInfo.refreshUpdateCheck()`, which re-reads this process's `-disableupdatecheck` at once and the node's setting on the serial lane.
 
@@ -418,10 +484,12 @@ The root, `WindowManager.qml`, shows each core message in a window of its own, a
   `LoadQmlFonts` registers the bundled fonts. `MMPTheme` takes its font family from it.
 - The root and its shell (`WindowManager.qml`, `SplashScreen.qml`, `MainWindow.qml` and
   `TabMenu.qml`), the overview (`OverviewView.qml` and `RecentTransactionItem.qml`), the
-  status footer (`StatusFooter.qml`), the About window (`AboutWindow.qml`) and the new
+  status footer (`StatusFooter.qml`), the About window (`AboutWindow.qml`), the settings
+  screen (`SettingsView.qml`) and the new
   `BuildMismatchBanner.qml` and `VersionInfoWindow.qml` bind `Gridcoin.Qml` or no context
-  property at all. The other carried screens still bind the context properties of the
-  branch they came from. `test/lint/lint-qml-module.sh` holds the list of files that may
+  property at all. Four of the other carried screens still bind the context properties of
+  the branch they came from, and the rest bind none. `test/lint/lint-qml-module.sh` holds
+  the list of files that may
   (`EditAddressDialog.qml`, `ReceiveView.qml`, `SendView.qml` and `UnlockDialog.qml`); a file is
   removed from it when it binds to `Gridcoin.Qml` names, a listed file that binds none fails
   the lint, and the list is to be empty before the QML front end becomes the default.
