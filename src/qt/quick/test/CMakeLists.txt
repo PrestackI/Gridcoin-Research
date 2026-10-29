@@ -45,6 +45,7 @@ target_link_libraries(test_gridcoin-qml PRIVATE
     gridcoinguimain
     gridcoinqt
     gridcoin_util
+    CURL::libcurl
 )
 
 # The offscreen platform plugin import: see the long comment in
