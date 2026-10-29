@@ -7,6 +7,7 @@ import QtQuick.Window
 import QtQml
 import Qt.labs.platform
 import Gridcoin.Qml
+import MMPTheme 1.0
 Item {
     id: root
 
@@ -22,6 +23,15 @@ Item {
     // The window of the current message, or of the last dismissed one until
     // showNextCoreMessage() destroys it.
     property var coreMessageWindow: null
+
+    // The stored theme. The root loads before the models attach, so this
+    // first shows the default and then follows Settings.appliedTheme, at
+    // attach and at each Apply that changes the stored theme.
+    Binding {
+        target: MMPTheme
+        property: "theme"
+        value: Settings.appliedTheme === "light" ? MMPTheme.lightTheme : MMPTheme.darkTheme
+    }
 
     // The splash may already be active when the root loads: the front end
     // creates it before it loads the root.
