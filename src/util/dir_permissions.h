@@ -75,8 +75,9 @@ bool CreateOwnerOnlyDirectory(const fs::path& path, std::string& error);
 //! call site, as ipc/process.cpp does when it creates the IPC socket.
 //!
 //! No-op on Windows, which has no umask. There the equivalent protection is the
-//! data directory's inheritable owner+SYSTEM DACL, applied by
-//! CreateOwnerOnlyDirectory() and inherited by everything created inside it.
+//! inheritable owner+SYSTEM DACL that CreateOwnerOnlyDirectory() applies to a
+//! data directory it creates; one it did not create keeps whatever DACL it
+//! already had.
 void SetOwnerOnlyUmask();
 
 #ifdef WIN32
