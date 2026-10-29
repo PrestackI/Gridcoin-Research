@@ -13,6 +13,7 @@
 #include <qt/quick/qmlprovider.h>
 #include <qt/quick/shelladapter.h>
 #include <qt/quick/splashadapter.h>
+#include <util.h>
 
 #include <QApplication>
 #include <QByteArray>
@@ -139,6 +140,11 @@ int qml_test::RunGuiMainChild(int argc, char* argv[])
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, QString::fromLocal8Bit(settings_dir));
     g_guimain_child = true;
+    // On Windows GuiMain rebuilds its arguments from the process command line
+    // (util::WinCmdLineArgs), so the child flag reaches its parser even though
+    // it is left out below; registered as a hidden argument, it is accepted.
+    gArgs.AddArg(std::string(qml_test::GUIMAIN_CHILD_ARG).substr(1), "", ArgsManager::ALLOW_ANY,
+                 OptionsCategory::HIDDEN);
     // GuiMain gets every argument but the child flag.
     std::vector<char*> args{argv[0]};
     for (int i = 2; i < argc; ++i) args.push_back(argv[i]);
