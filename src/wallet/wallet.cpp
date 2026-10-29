@@ -1344,12 +1344,15 @@ bool CWallet::AddToWallet(const CWalletTx& wtxIn, CWalletDB* pwalletdb) EXCLUSIV
                 {
                     if (txout.scriptPubKey == scriptDefaultKey)
                     {
+                        // Book the fresh default only if it was fully
+                        // activated; one rotation retires the paid key, so
+                        // further outputs to it need no additional rotations.
                         CPubKey newDefaultKey;
-                        if (GetKeyFromPool(newDefaultKey, false))
+                        if (GetKeyFromPool(newDefaultKey, false) && SetDefaultKey(newDefaultKey))
                         {
-                            SetDefaultKey(newDefaultKey);
                             SetAddressBookName(vchDefaultKey.GetID(), "");
                         }
+                        break;
                     }
                 }
             }
@@ -1503,8 +1506,7 @@ bool CWallet::SyncTransaction(const CTransactionRef& ptx,
             if (txout.scriptPubKey == scriptDefaultKey) {
                 // Book the fresh default only if it was fully activated;
                 // one rotation retires the paid key, so further outputs to
-                // it need no additional rotations (unlike the legacy loop,
-                // which drew one pool key per matching output).
+                // it need no additional rotations.
                 CPubKey newDefaultKey;
                 if (GetKeyFromPool(newDefaultKey, false) && SetDefaultKey(newDefaultKey)) {
                     SetAddressBookName(vchDefaultKey.GetID(), "");

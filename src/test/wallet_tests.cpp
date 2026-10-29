@@ -4802,6 +4802,53 @@ BOOST_AUTO_TEST_CASE(incoming_payment_rotates_default_key)
     pwalletMain->EraseFromWallet(tx.GetHash());
 }
 
+BOOST_AUTO_TEST_CASE(add_to_wallet_rotates_default_key_once)
+{
+    // A transaction paying the default receiving address on several outputs
+    // rotates it once on the AddToWallet path, as on the SyncTransaction path:
+    // one pool key drawn and one fresh address booked.
+    LOCK2(cs_main, pwalletMain->cs_wallet);
+
+    if (!pwalletMain->vchDefaultKey.IsValid()) {
+        CPubKey bootstrap_default;
+        BOOST_REQUIRE(pwalletMain->GetKeyFromPool(bootstrap_default, false));
+        BOOST_REQUIRE(pwalletMain->SetDefaultKey(bootstrap_default));
+    }
+    BOOST_REQUIRE(!pwalletMain->IsLocked());
+    BOOST_REQUIRE(pwalletMain->TopUpKeyPool());
+    BOOST_REQUIRE(pwalletMain->setKeyPool.size() >= 3);
+
+    const CPubKey old_default = pwalletMain->vchDefaultKey;
+    const size_t book_before = pwalletMain->mapAddressBook.size();
+    const std::set<int64_t> pool_before = pwalletMain->setKeyPool;
+
+    CMutableTransaction mtx;
+    mtx.vin.resize(1);
+    mtx.vin[0].prevout = COutPoint(uint256S("0x5555555555555555555555555555555555555555555555555555555555555555"), 0);
+    mtx.vout.resize(3);
+    for (CTxOut& out : mtx.vout) {
+        out.nValue = 1 * COIN;
+        out.scriptPubKey.SetDestination(CTxDestination(old_default.GetID()));
+    }
+    const CTransaction tx(mtx);
+
+    CWalletTx wtx(pwalletMain, tx);
+    wtx.SetTxState(TxStateInMempool{});
+    CWalletDB walletdb(pwalletMain->strWalletFile);
+    BOOST_REQUIRE(pwalletMain->AddToWallet(wtx, &walletdb));
+
+    size_t drawn = 0;
+    for (const int64_t index : pool_before) {
+        if (!pwalletMain->setKeyPool.count(index)) ++drawn;
+    }
+    const size_t book_after = pwalletMain->mapAddressBook.size();
+    BOOST_CHECK_EQUAL(book_after, book_before + 1);
+    BOOST_CHECK_EQUAL(drawn, size_t{1});
+    BOOST_CHECK(pwalletMain->vchDefaultKey != old_default);
+
+    pwalletMain->EraseFromWallet(tx.GetHash());
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 // ===========================================================================
