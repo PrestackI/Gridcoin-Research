@@ -533,8 +533,11 @@ static void AddMissingRpcCredentials()
 //! open, and the autounlock helper reads it from this file.
 //!
 //! The file is created owner-only where the platform expresses that as a mode.
-//! On Windows it inherits the data directory's owner+SYSTEM DACL (see
-//! util::CreateOwnerOnlyDirectory), which is applied at creation and inheritable.
+//! On Windows the file gets no DACL of its own. Created inside a data directory
+//! util::CreateOwnerOnlyDirectory created, it inherits that directory's
+//! owner+SYSTEM DACL, which is applied at creation and inheritable; otherwise (a
+//! data directory that function did not create, or a -conf path outside the data
+//! directory) nothing here restricts it.
 static void CreateNewConfigFile()
 {
     fsbridge::ofstream myConfig;
@@ -543,9 +546,10 @@ static void CreateNewConfigFile()
     // Narrow the file BEFORE the password is written, not after: between creation
     // and a trailing chmod the file would briefly sit at whatever the umask allows,
     // and on a data directory the operator had previously widened that window is
-    // readable. On Windows there is no meaningful chmod, but the file inherits the
-    // data directory's owner+SYSTEM DACL from creation (util::CreateOwnerOnlyDirectory
-    // applies it inheritable), which closes the same window by a different route.
+    // readable. On Windows there is no meaningful chmod; a file created inside a
+    // data directory util::CreateOwnerOnlyDirectory created inherits its
+    // owner+SYSTEM DACL from creation, which closes the same window by a
+    // different route.
 #ifndef WIN32
     if (::chmod(GetConfigFile().string().c_str(), 0600) != 0) {
         LogPrintf("WARNING: %s: could not restrict %s to owner-only (errno %d); it will contain "

@@ -133,13 +133,13 @@ add_executable(test_gridcoin
     # selection mirror, and the value-filter parity semantics. Core lives in
     # gridcoin_util, so only the suite is listed here (GUI-OFF).
     qt_walletcoinstore_tests.cpp
-    # Transport helpers (src/ipc/process.cpp). Also Cap'n Proto-free. Needed here
-    # because on WIN32 handshake.cpp's WriteFileAtomic calls MakeOwnerOnlyDacl /
-    # ApplyOwnerOnlyDacl (defined at process.cpp:587,607) to create the cookie with
-    # an owner-only DACL. gridcoin_ipc would supply them, but it is deliberately
-    # NOT linked here on Windows (see the ENABLE_MULTIPROCESS AND NOT WIN32 guard
-    # below), so without this the win64 test link fails on those two symbols while
-    # every other target succeeds.
+    # Transport helpers (src/ipc/process.cpp). Also Cap'n Proto-free. Added for the
+    # win64 test link when handshake.cpp's WIN32 WriteFileAtomic took
+    # MakeOwnerOnlyDacl / ApplyOwnerOnlyDacl from this file, because gridcoin_ipc
+    # is deliberately NOT linked here on Windows (see the ENABLE_MULTIPROCESS AND
+    # NOT WIN32 guard below). Those two helpers now live in util/dir_permissions.cpp,
+    # in gridcoin_util, and nothing compiled here references process.cpp any more;
+    # without ENABLE_MULTIPROCESS this entry is the only place it is compiled.
     ${CMAKE_SOURCE_DIR}/src/ipc/process.cpp
     # Multiprocess connect-handshake logic (src/ipc/handshake.cpp): identity-token
     # hashing, the ClientHandshake matching policy, and CheckIdentityBinding. The
@@ -292,10 +292,13 @@ target_link_libraries(test_gridcoin PRIVATE
     ZLIB::ZLIB
 )
 
-# The IPC sources compiled in above use the Win32 DACL API (SetEntriesInAclW,
-# Get/SetNamedSecurityInfoW, InitializeSecurityDescriptor,
-# SetSecurityDescriptorDacl). gridcoin_ipc carries advapi32 for the other
-# targets, but it is not linked here on Windows, so name it directly.
+# handshake.cpp, compiled in above, calls InitializeSecurityDescriptor,
+# SetSecurityDescriptorDacl and SetSecurityDescriptorControl directly. The DACL
+# helpers it and process.cpp call, which use SetEntriesInAclW and
+# Get/SetNamedSecurityInfoW, are in util/dir_permissions.cpp, in gridcoin_util.
+# gridcoin_util links advapi32 PUBLIC on WIN32, so the library already reaches
+# this target through that link; it is named here as well for handshake.cpp's
+# own direct calls.
 if(WIN32)
     target_link_libraries(test_gridcoin PRIVATE advapi32)
 endif()
