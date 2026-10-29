@@ -2338,6 +2338,15 @@ BOOST_AUTO_TEST_CASE(transaction_added_to_mempool_preserves_inmempool_state)
 
 BOOST_AUTO_TEST_SUITE_END()
 
+extern bool fQtActive;
+
+//! Sets fQtActive for one test case and restores it on exit.
+struct QtActiveScope {
+    const bool saved{fQtActive};
+    QtActiveScope() { fQtActive = true; }
+    ~QtActiveScope() { fQtActive = saved; }
+};
+
 BOOST_AUTO_TEST_SUITE(wallet_state_tests)
 
 BOOST_AUTO_TEST_CASE(state_type_creation)
@@ -4769,9 +4778,9 @@ BOOST_AUTO_TEST_CASE(mempool_spend_marks_parent_output_spent)
 
 BOOST_AUTO_TEST_CASE(incoming_payment_rotates_default_key)
 {
-    // Legacy AddToWallet parity restored on the SyncTransaction path: a
-    // payment to the default receiving address rotates it to a fresh key
-    // (daemon mode; the Qt GUI manages its own receiving addresses).
+    // A payment to the default receiving address rotates it to a fresh key
+    // on the SyncTransaction path, in every front end.
+    QtActiveScope qt_active;
     LOCK2(cs_main, pwalletMain->cs_wallet);
 
     if (!pwalletMain->vchDefaultKey.IsValid()) {
@@ -4806,7 +4815,8 @@ BOOST_AUTO_TEST_CASE(add_to_wallet_rotates_default_key_once)
 {
     // A transaction paying the default receiving address on several outputs
     // rotates it once on the AddToWallet path, as on the SyncTransaction path:
-    // one pool key drawn and one fresh address booked.
+    // one pool key drawn and one fresh address booked, in every front end.
+    QtActiveScope qt_active;
     LOCK2(cs_main, pwalletMain->cs_wallet);
 
     if (!pwalletMain->vchDefaultKey.IsValid()) {

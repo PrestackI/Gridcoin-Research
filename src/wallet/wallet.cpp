@@ -35,7 +35,6 @@
 
 using namespace std;
 
-extern bool fQtActive;
 extern MilliTimer g_timer;
 
 bool fConfChange;
@@ -1334,26 +1333,23 @@ bool CWallet::AddToWallet(const CWalletTx& wtxIn, CWalletDB* pwalletdb) EXCLUSIV
         if (fInsertedNew || fUpdated)
             if (!wtx.WriteToDisk(pwalletdb))
                 return false;
-        if(!fQtActive)
-        {
-            // If default receiving address gets used, replace it with a new one
-            if (vchDefaultKey.IsValid()) {
-                CScript scriptDefaultKey;
-                scriptDefaultKey.SetDestination(vchDefaultKey.GetID());
-                for (auto const& txout : wtx.vout)
+        // If default receiving address gets used, replace it with a new one
+        if (vchDefaultKey.IsValid()) {
+            CScript scriptDefaultKey;
+            scriptDefaultKey.SetDestination(vchDefaultKey.GetID());
+            for (auto const& txout : wtx.vout)
+            {
+                if (txout.scriptPubKey == scriptDefaultKey)
                 {
-                    if (txout.scriptPubKey == scriptDefaultKey)
+                    // Book the fresh default only if it was fully
+                    // activated; one rotation retires the paid key, so
+                    // further outputs to it need no additional rotations.
+                    CPubKey newDefaultKey;
+                    if (GetKeyFromPool(newDefaultKey, false) && SetDefaultKey(newDefaultKey))
                     {
-                        // Book the fresh default only if it was fully
-                        // activated; one rotation retires the paid key, so
-                        // further outputs to it need no additional rotations.
-                        CPubKey newDefaultKey;
-                        if (GetKeyFromPool(newDefaultKey, false) && SetDefaultKey(newDefaultKey))
-                        {
-                            SetAddressBookName(vchDefaultKey.GetID(), "");
-                        }
-                        break;
+                        SetAddressBookName(vchDefaultKey.GetID(), "");
                     }
+                    break;
                 }
             }
         }
@@ -1494,11 +1490,11 @@ bool CWallet::SyncTransaction(const CTransactionRef& ptx,
     }
 
     // If the default receiving address was paid, rotate it to a fresh key
-    // (legacy AddToWallet parity; the Qt GUI manages its own receiving
-    // addresses). The rotation is naturally idempotent across the
-    // mempool-then-confirmed resync of the same transaction: after the first
-    // rotation the transaction no longer pays the current default key.
-    if (!fQtActive && vchDefaultKey.IsValid()) {
+    // (the legacy AddToWallet loop does the same, in every front end). The
+    // rotation is naturally idempotent across the mempool-then-confirmed
+    // resync of the same transaction: after the first rotation the
+    // transaction no longer pays the current default key.
+    if (vchDefaultKey.IsValid()) {
         CScript scriptDefaultKey;
         scriptDefaultKey.SetDestination(vchDefaultKey.GetID());
 
