@@ -12,6 +12,7 @@
 #include "quittests.h"
 #include "rootwiringtests.h"
 #include "settingsadaptertests.h"
+#include "settingswiringtests.h"
 #include "statusadaptertests.h"
 
 #include <QTest>
@@ -71,6 +72,9 @@ int main(int argc, char* argv[])
 
     QmlSettingsAdapterTests test10;
     if (QTest::qExec(&test10) != 0) fInvalid = true;
+
+    QmlSettingsWiringTests test11;
+    if (QTest::qExec(&test11) != 0) fInvalid = true;
 
     // The test application swallows what its notify() catches; nothing a test
     // did not expect may be left.
