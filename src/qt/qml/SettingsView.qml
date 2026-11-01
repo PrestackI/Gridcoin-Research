@@ -5,11 +5,16 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import MMPTheme 1.0
+import Gridcoin.Qml
 
 Rectangle{
     id: main
     color: MMPTheme.backgroundColor
-    property bool settingsChanged: true
+    property bool settingsChanged: Settings.dirty
+    // Read again each time the screen opens; what was staged and not saved
+    // is dropped when it closes.
+    Component.onCompleted: { Settings.reload(); Settings.sideStakes.refresh() }
+    Component.onDestruction: Settings.discard()
     Rectangle {
         id: settingsTabMenuRect
         color: MMPTheme.headerColor
@@ -28,10 +33,12 @@ Rectangle{
         }
         RowLayout {
             id: tabMenuRowLayout
+            objectName: "settingsTabRow"
             anchors.centerIn: parent
             spacing: 30
             property Item currentItem: generalSettingsTabButton
             Shortcut {
+                objectName: "nextSettingsPageShortcut"
                 sequences: [StandardKey.MoveToNextPage]
                 onActivated: {
                     switch(tabMenuRowLayout.currentItem) {
@@ -45,7 +52,6 @@ Rectangle{
                         tabMenuRowLayout.currentItem = displaySettingsTabButton
                         break
                     case displaySettingsTabButton:
-                        tabMenuRowLayout.currentItem = nodesSettingsTabButton
                         break
                     case nodesSettingsTabButton:
                         break
@@ -103,6 +109,7 @@ Rectangle{
             }
             MouseArea {
                 id: networkSettingsTabButton
+                objectName: "networkSettingsTabButton"
                 Layout.preferredHeight: 50
                 Layout.preferredWidth: 50
                 opacity: tabMenuRowLayout.currentItem==networkSettingsTabButton ? 1 : 0.4
@@ -130,6 +137,7 @@ Rectangle{
             }
             MouseArea {
                 id: windowSettingsTabButton
+                objectName: "windowSettingsTabButton"
                 Layout.preferredHeight: 50
                 Layout.preferredWidth: 50
                 opacity: tabMenuRowLayout.currentItem==windowSettingsTabButton ? 1 : 0.4
@@ -157,6 +165,7 @@ Rectangle{
             }
             MouseArea {
                 id: displaySettingsTabButton
+                objectName: "displaySettingsTabButton"
                 Layout.preferredHeight: 50
                 Layout.preferredWidth: 50
                 opacity: tabMenuRowLayout.currentItem==displaySettingsTabButton ? 1 : 0.4
@@ -183,8 +192,10 @@ Rectangle{
                 }
 
             }
+            // No Widgets counterpart yet; hidden until one exists.
             MouseArea {
                 id: nodesSettingsTabButton
+                visible: false
                 Layout.preferredHeight: 50
                 Layout.preferredWidth: 50
                 opacity: tabMenuRowLayout.currentItem==nodesSettingsTabButton ? 1 : 0.4
@@ -288,9 +299,11 @@ Rectangle{
             }
             Button {
                 id: saveButton
+                objectName: "settingsSaveButton"
                 text: qsTr("Save")
                 icon.source: MMPTheme.themeSelect("qrc:/icons/buttons/ic_btn_save_light.svg", "qrc:/icons/buttons/ic_btn_save_dark.svg")
                 enabled: settingsChanged
+                onClicked: Settings.apply()
                 anchors {
                     right: parent.right
                     verticalCenter: parent.verticalCenter
@@ -299,12 +312,28 @@ Rectangle{
             }
             Button {
                 id: discardButton
+                objectName: "settingsDiscardButton"
                 text: qsTr("Discard")
                 icon.source: MMPTheme.themeSelect("qrc:/icons/buttons/ic_btn_discard_light.svg", "qrc:/icons/buttons/ic_btn_discard_dark.svg")
                 enabled: settingsChanged
+                onClicked: Settings.discard()
                 anchors {
                     right: saveButton.left
                     verticalCenter: parent.verticalCenter
+                    rightMargin: 10
+                }
+            }
+            Label {
+                id: settingsStatusLabel
+                objectName: "settingsStatusLabel"
+                text: Settings.lastError || (Settings.restartRequired ? qsTranslate("OptionsDialog", "This setting will take effect after restarting Gridcoin.") : "")
+                wrapMode: Text.WordWrap
+                color: MMPTheme.textColor
+                anchors {
+                    left: parent.left
+                    right: discardButton.left
+                    verticalCenter: parent.verticalCenter
+                    leftMargin: 20
                     rightMargin: 10
                 }
             }
@@ -315,7 +344,7 @@ Rectangle{
         id: generalSettingsView
         ScrollView {
             id: generalSettingsScrollView
-            property Item defaultFocusItem: transactionFeeSpinbox
+            property Item defaultFocusItem: reserveSpinbox
             anchors.fill: parent
             clip: true
             contentWidth: availableWidth
@@ -336,14 +365,18 @@ Rectangle{
                     leftMargin: 20
                     rightMargin: 20
                 }
+                // No Widgets counterpart yet; hidden until one exists.
                 Text {
                     id: transactionFeeLabel
+                    visible: false
                     text: qsTr("Pay Transaction Fee:")
                     color: MMPTheme.textColor
                     Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
                 }
+                // No Widgets counterpart yet; hidden until one exists.
                 SpinBox {
                     id: transactionFeeSpinbox
+                    visible: false
                     property int decimals: 8
                     property real factor: Math.pow(10, decimals)
                     KeyNavigation.tab: reserveSpinbox
@@ -366,8 +399,10 @@ Rectangle{
                         return Number.fromLocaleString(locale, text) * factor
                     }
                 }
+                // No Widgets counterpart yet; hidden until one exists.
                 Item {
                     //This item sets the last column to fill the width
+                    visible: false
                     Layout.fillWidth: true
                     HelpHover {
                         id: transactionFeeHelp
@@ -386,34 +421,21 @@ Rectangle{
                     color: MMPTheme.textColor
                     Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
                 }
-                SpinBox {
+                // The reserve as text in the display unit: Apply refuses what
+                // the unit's parser rejects, so there is no validator here.
+                TextField {
                     id: reserveSpinbox
-                    property int decimals: 2
-                    property real factor: Math.pow(10, decimals)
+                    objectName: "reserveField"
                     Layout.preferredWidth: 120
-                    editable: true
-                    from: 0
-                    to: 10000000 * factor
-                    value: 0
-                    stepSize: factor/1000 //0.01
-//                    KeyNavigation.tab: sideStakingCheckbox This doesn't work. Idk why, all the others do
-                    KeyNavigation.tab: {    //This also doesn't work
-                        if (sideStakingCheckbox.checked && sideStakeListView.count>0) return sideStakeListView.itemAtIndex(0).addressTextField
+                    text: Settings.reserveBalance
+                    onTextEdited: Settings.reserveBalance = text
+                    KeyNavigation.tab: {
+                        if (sideStakingCheckbox.checked && sideStakeListView.count>0) {
+                            var it = sideStakeListView.itemAtIndex(0)
+                            return it ? it.addressTextField : utxoOptimisationCheckbox
+                        }
                         return utxoOptimisationCheckbox
                     }
-                    validator: DoubleValidator{
-                        bottom: Math.min(reserveSpinbox.from, reserveSpinbox.to)
-                        top:  Math.max(reserveSpinbox.from, reserveSpinbox.to)
-                        notation: DoubleValidator.StandardNotation
-                        decimals: 8
-                    }
-                    textFromValue: function(value, locale) {
-                        return Number(value / factor).toLocaleString(locale, 'f', reserveSpinbox.decimals)
-                    }
-                    valueFromText: function(text, locale) {
-                        return Number.fromLocaleString(locale, text) * factor
-                    }
-                    onValueChanged: main.settingsChanged = true
                 }
                 HelpHover {
                     id: reserveHelp
@@ -429,11 +451,23 @@ Rectangle{
                     Layout.columnSpan: 3
                 }
                 CheckBox {
+                    id: enableStakingCheckbox
+                    text: qsTranslate("OptionsDialog", "Enable Staking")
+                    checked: Settings.enableStaking
+                    onToggled: Settings.enableStaking = checked
+                    Layout.columnSpan: 3
+                }
+                CheckBox {
                     id: sideStakingCheckbox
                     text: qsTr("Enable Sidestaking")
                     enabled: true
+                    checked: Settings.enableSideStaking
+                    onToggled: Settings.enableSideStaking = checked
                     KeyNavigation.tab: {
-                        if (checked && sideStakeListView.count>0) return sideStakeListView.itemAtIndex(0).addressTextField
+                        if (checked && sideStakeListView.count>0) {
+                            var it = sideStakeListView.itemAtIndex(0)
+                            return it ? it.addressTextField : utxoOptimisationCheckbox
+                        }
                         return utxoOptimisationCheckbox
                     }
                 }
@@ -468,13 +502,17 @@ Rectangle{
                     width: parent.width-2
                     radius: parent.radius
                     borderColor: sideStakeRect.border.color
-                    model: [{text: qsTr("Side Stake Address"), width: sideStakeHeader.width*0.75}, {text: qsTr("Percentage"), width: sideStakeHeader.width*0.25}]
+                    model: [{text: qsTr("Side Stake Address"), width: sideStakeHeader.width*0.45},
+                            {text: qsTr("Percentage"), width: sideStakeHeader.width*0.15},
+                            {text: qsTranslate("SideStakeTableModel", "Description"), width: sideStakeHeader.width*0.25},
+                            {text: qsTranslate("SideStakeTableModel", "Status"), width: sideStakeHeader.width*0.15}]
                 }
                 ListView {
                     id: sideStakeListView
+                    objectName: "sideStakeListView"
                     clip: true
                     currentIndex: 0
-                    interactive: false
+                    interactive: true
                     anchors {
                         top: sideStakeHeader.bottom
                         left: parent.left
@@ -483,40 +521,36 @@ Rectangle{
                         leftMargin: 1
                         rightMargin: 1
                     }
-                    model: ListModel{
-                        id: sideStakeListModel
-                        ListElement{address: "SBsdjflids"; percentage: 34}
-                        ListElement{address: "SBISDHFIODdsifhdis"; percentage: 21}
-                        ListElement{address: "SBISDHFIODdsifhdis"; percentage: 21}
-                        ListElement{address: "SBISDHFIODdsifhdis"; percentage: 21}
-                        ListElement{address: "SBISDHFIODdsifhdis"; percentage: 21}
-                        ListElement{address: "SBISDHFIODdsifhdis"; percentage: 21}
-                    }
+                    model: Settings.sideStakes
                     delegate: Rectangle {
                         width: sideStakeListView.width
                         height: 25
                         color: sideStakeListView.currentIndex===index ? MMPTheme.themeSelect(MMPTheme.cFrostWhite, "#212c3b") : "transparent"
                         radius: 4
                         property Item addressTextField: addressTextField
+                        property Item percentageTextField: percentageTextField
+                        property Item descriptionTextField: descriptionTextField
+                        // A mandatory sidestake is shown but cannot be edited.
+                        property bool editable: model.editable
                         Row {
                             height: parent.height
                             width: parent.width
                             Item {
                                 id: addressItem
                                 height: parent.height
-                                width: 0.75 * parent.width
+                                width: 0.45 * parent.width
+                                // An address is not editable, as in the Widgets edit dialog.
                                 TextField {
                                     id: addressTextField
+                                    objectName: "addressField"
                                     text: model.address
-                                    placeholderText: qsTr("Enter a Gridcoin Address")
+                                    readOnly: true
                                     onFocusChanged: {
                                         if (focus) {
                                             sideStakeListView.currentIndex = index
                                             forceActiveFocus()
                                         }
                                     }
-
-                                    onTextEdited: sideStakeListView.model.set(index, {address: text})
                                     anchors {
                                         left: parent.left
                                         right: parent.right
@@ -529,10 +563,13 @@ Rectangle{
                             Item {
                                 id: percentageItem
                                 height: parent.height
-                                width: 0.25 * parent.width
+                                width: 0.15 * parent.width
+                                // No validator: the table reads a fractional allocation.
                                 TextField {
                                     id: percentageTextField
-                                    text: model.percentage
+                                    objectName: "allocationField"
+                                    text: Number(model.allocation).toFixed(2)
+                                    readOnly: !model.editable
                                     placeholderText: qsTr("Enter a percentage")
                                     onFocusChanged: {
                                         if (focus) {
@@ -540,18 +577,29 @@ Rectangle{
                                             forceActiveFocus()
                                         }
                                     }
-                                    onTextEdited: {
-                                        if (text != "") {
-                                            var textInt = parseInt(text)
-                                            if (textInt > 100)
-                                                sideStakeListView.model.set(index, {percentage: textInt})
+                                    anchors {
+                                        left: parent.left
+                                        right: parent.right
+                                        verticalCenter: parent.verticalCenter
+                                    }
+                                    background: Item{}
+                                    KeyNavigation.tab: descriptionTextField
+                                }
+                            }
+                            Item {
+                                id: descriptionItem
+                                height: parent.height
+                                width: 0.25 * parent.width
+                                TextField {
+                                    id: descriptionTextField
+                                    text: model.description
+                                    readOnly: !model.editable
+                                    onFocusChanged: {
+                                        if (focus) {
+                                            sideStakeListView.currentIndex = index
+                                            forceActiveFocus()
                                         }
                                     }
-                                    validator: IntValidator {
-                                        bottom: 0
-                                        top: 100
-                                    }
-                                    inputMethodHints: Qt.ImhDigitsOnly
                                     anchors {
                                         left: parent.left
                                         right: parent.right
@@ -560,7 +608,24 @@ Rectangle{
                                     background: Item{}
                                     KeyNavigation.tab: {
                                         if (index === sideStakeListView.count-1) return utxoOptimisationCheckbox
-                                        return sideStakeListView.itemAtIndex(index+1).addressTextField
+                                        var it = sideStakeListView.itemAtIndex(index+1)
+                                        return it ? it.addressTextField : utxoOptimisationCheckbox
+                                    }
+                                }
+                            }
+                            Item {
+                                id: statusItem
+                                height: parent.height
+                                width: 0.15 * parent.width
+                                Text {
+                                    id: statusText
+                                    text: model.status
+                                    color: MMPTheme.textColor
+                                    elide: Text.ElideRight
+                                    anchors {
+                                        left: parent.left
+                                        right: parent.right
+                                        verticalCenter: parent.verticalCenter
                                     }
                                 }
                             }
@@ -574,18 +639,24 @@ Rectangle{
                     RowLayout {
                         id: buttonRow
                         height: parent.height
+                        width: parent.width
                         spacing: 0
                         Button {
                             id: addSSButton
+                            objectName: "addSSButton"
                             Layout.fillHeight: true
                             implicitWidth: 30
                             icon.source: MMPTheme.themeSelect("/icons/buttons/ic_btn_add_light.svg","/icons/buttons/ic_btn_add_dark.svg")
                             background: Item{}
                             onClicked: {
-                                sideStakeListModel.append({address: "", percentage: 0})
-                                sideStakeListView.currentIndex = sideStakeListModel.count-1
+                                if (Settings.sideStakes.add(newSideStakeAddressField.text,
+                                                            newSideStakeAllocationField.text,
+                                                            newSideStakeDescriptionField.text)) {
+                                    newSideStakeAddressField.clear()
+                                    newSideStakeAllocationField.clear()
+                                    newSideStakeDescriptionField.clear()
+                                }
                             }
-                            enabled: sideStakeListModel.count < 6
                         }
                         Rectangle {
                             id: buttonSeparator
@@ -593,20 +664,73 @@ Rectangle{
                             width: 1
                             Layout.fillHeight: true
                         }
+                        // The footer sits outside the delegate, so it reads the
+                        // current row through currentItem, not model.
                         Button {
                             id: removeSSButton
+                            objectName: "removeSSButton"
                             Layout.fillHeight: true
                             implicitWidth: 30
                             icon.source: MMPTheme.themeSelect("/icons/buttons/ic_btn_remove_light.svg","/icons/buttons/ic_btn_remove_dark.svg")
                             background: Item{}
-                            onClicked: sideStakeListModel.remove(sideStakeListView.currentIndex)
-                            enabled: sideStakeListModel.count > 0
+                            onClicked: Settings.sideStakes.remove(sideStakeListView.currentIndex)
+                            enabled: sideStakeListView.currentItem !== null && sideStakeListView.currentItem.editable
                         }
                         Rectangle {
                             id: buttonSeparator2
                             color: sideStakeRect.border.color
                             width: 1
                             Layout.fillHeight: true
+                        }
+                        Button {
+                            id: editSSButton
+                            objectName: "editSSButton"
+                            Layout.fillHeight: true
+                            implicitWidth: 30
+                            icon.source: MMPTheme.themeSelect("/icons/buttons/ic_btn_save_light.svg","/icons/buttons/ic_btn_save_dark.svg")
+                            background: Item{}
+                            onClicked: Settings.sideStakes.edit(sideStakeListView.currentIndex,
+                                                                sideStakeListView.currentItem.percentageTextField.text,
+                                                                sideStakeListView.currentItem.descriptionTextField.text)
+                            enabled: sideStakeListView.currentItem !== null && sideStakeListView.currentItem.editable
+                        }
+                        Rectangle {
+                            id: buttonSeparator3
+                            color: sideStakeRect.border.color
+                            width: 1
+                            Layout.fillHeight: true
+                        }
+                        TextField {
+                            id: newSideStakeAddressField
+                            objectName: "newSideStakeAddressField"
+                            Layout.preferredWidth: 0.35 * sideStakeFooter.width
+                            Layout.fillHeight: true
+                            placeholderText: qsTr("Enter a Gridcoin Address")
+                            background: Item{}
+                        }
+                        TextField {
+                            id: newSideStakeAllocationField
+                            objectName: "newSideStakeAllocationField"
+                            Layout.preferredWidth: 0.15 * sideStakeFooter.width
+                            Layout.fillHeight: true
+                            placeholderText: qsTr("Enter a percentage")
+                            background: Item{}
+                        }
+                        TextField {
+                            id: newSideStakeDescriptionField
+                            objectName: "newSideStakeDescriptionField"
+                            Layout.preferredWidth: 0.2 * sideStakeFooter.width
+                            Layout.fillHeight: true
+                            placeholderText: qsTranslate("SideStakeTableModel", "Description")
+                            background: Item{}
+                        }
+                        Label {
+                            id: sideStakeStatusLabel
+                            objectName: "sideStakeStatusLabel"
+                            text: Settings.sideStakes.lastError
+                            wrapMode: Text.WordWrap
+                            color: MMPTheme.textColor
+                            Layout.fillWidth: true
                         }
                     }
                 }
@@ -633,6 +757,8 @@ Rectangle{
                 CheckBox {
                     id: utxoOptimisationCheckbox
                     text: qsTr("Stake Splitting")
+                    checked: Settings.enableStakeSplit
+                    onToggled: Settings.enableStakeSplit = checked
                     KeyNavigation.tab: targetEfficiencyTextField
                 }
                 Item {
@@ -661,9 +787,11 @@ Rectangle{
                     Layout.preferredWidth: 60
                     enabled: utxoOptimisationCheckbox.checked
                     KeyNavigation.tab: minSizeTextField
+                    text: Settings.stakingEfficiency
+                    onTextEdited: Settings.stakingEfficiency = text
                     validator: IntValidator{
-                        bottom: 0
-                        top: 99
+                        bottom: 75
+                        top: 98
                     }
                 }
                 Text {
@@ -677,10 +805,20 @@ Rectangle{
                     inputMethodHints: Qt.ImhDigitsOnly
                     Layout.preferredWidth: 60
                     enabled: utxoOptimisationCheckbox.checked
-                    KeyNavigation.tab: startAtLoginCheckbox
+                    KeyNavigation.tab: contractChangeCheckbox
+                    text: Settings.minStakeSplitValue
+                    onTextEdited: Settings.minStakeSplitValue = text
                     validator: IntValidator{
-                        bottom: 0
+                        bottom: 800
                     }
+                }
+                CheckBox {
+                    id: contractChangeCheckbox
+                    text: qsTranslate("OptionsDialog", "Return change to an input address for contract transactions")
+                    checked: Settings.contractChangeToInput
+                    onToggled: Settings.contractChangeToInput = checked
+                    Layout.columnSpan: 2
+                    KeyNavigation.tab: startAtLoginCheckbox
                 }
                 Rectangle {
                     color: MMPTheme.separatorColor
@@ -690,21 +828,45 @@ Rectangle{
                 }
                 CheckBox {
                     id: startAtLoginCheckbox
+                    objectName: "startAtLoginCheckbox"
                     text: qsTr("Start at system login")
+                    visible: Settings.startupOptionsAvailable
+                    checked: Settings.startAtStartup
+                    onToggled: Settings.startAtStartup = checked
                     Layout.columnSpan: 2
                     KeyNavigation.tab: disableUpdateCheckBox
                 }
                 CheckBox {
+                    id: startMinimizedCheckbox
+                    text: qsTranslate("OptionsDialog", "Start minimized")
+                    visible: Settings.startupOptionsAvailable
+                    checked: Settings.startAtStartupMinimized
+                    onToggled: Settings.startAtStartupMinimized = checked
+                    Layout.columnSpan: 2
+                }
+                CheckBox {
                     id: disableUpdateCheckBox
+                    objectName: "disableUpdateCheckBox"
                     text: qsTr("Disable update checks")
-                    KeyNavigation.tab: transactionFeeSpinbox
+                    visible: Settings.updateCheckOptionAvailable
+                    checked: Settings.disableUpdateCheck
+                    onToggled: Settings.disableUpdateCheck = checked
+                    KeyNavigation.tab: reserveSpinbox
                 }
                 HelpHover {
                     id: updateChecksHelpHover
+                    visible: disableUpdateCheckBox.visible
                     text: qsTr("Increases user interface performance by reducing updates")
                     popupWidth: 200
                     horiontalPadding: 10
                     verticalPadding: 10
+                }
+                Button {
+                    id: openConfigButton
+                    text: qsTranslate("BitcoinGUI", "Open config &file...").replace("&", "")
+                    enabled: Settings.hostPathsAvailable
+                    onClicked: Settings.openConfigFile()
+                    Layout.columnSpan: 2
                 }
             }
         }
@@ -727,7 +889,11 @@ Rectangle{
                 }
                 CheckBox {
                     id: upnpCheckbox
+                    objectName: "upnpCheckbox"
                     text: qsTr("Map port using UPnP")
+                    enabled: Settings.upnpAvailable
+                    checked: Settings.mapPortUpnp
+                    onToggled: Settings.mapPortUpnp = checked
                     KeyNavigation.tab: socksCheckbox
                 }
                 Item {
@@ -741,6 +907,8 @@ Rectangle{
                 CheckBox {
                     id: socksCheckbox
                     text: qsTr("Connect through SOCKS proxy")
+                    checked: Settings.proxyUse
+                    onToggled: Settings.proxyUse = checked
                     KeyNavigation.tab: checked ? proxyIPTextField : upnpCheckbox
                 }
                 HelpHover {
@@ -760,6 +928,8 @@ Rectangle{
                         Layout.preferredWidth: 140
                         placeholderText: "255.255.255.255"
                         enabled: socksCheckbox.checked
+                        text: Settings.proxyIp
+                        onTextEdited: Settings.proxyIp = text
                     }
                     Text {
                         id: portLabel
@@ -771,15 +941,23 @@ Rectangle{
                         placeholderText: "9050"
                         Layout.preferredWidth: 60
                         enabled: socksCheckbox.checked
-                        KeyNavigation.tab: socksVersionComboBox
+                        text: Settings.proxyPort
+                        // A port that is not a whole number stages 0, which
+                        // Apply refuses.
+                        onTextEdited: Settings.proxyPort = /^[0-9]{1,5}$/.test(text.trim()) ? parseInt(text.trim(), 10) : 0
+                        KeyNavigation.tab: upnpCheckbox
                     }
+                    // No Widgets counterpart yet; hidden until one exists.
                     Text {
                         id: socksVersionLabel
+                        visible: false
                         text: qsTr("SOCKS version: ")
                         color: MMPTheme.textColor
                     }
+                    // No Widgets counterpart yet; hidden until one exists.
                     ComboBox {
                         id: socksVersionComboBox
+                        visible: false
                         Layout.preferredWidth: 40
                         model: [5, 4]
                         enabled: socksCheckbox.checked
@@ -805,17 +983,28 @@ Rectangle{
                 }
                 CheckBox {
                     id: minimiseToTrayCheckbox
+                    objectName: "minimiseToTrayCheckbox"
                     text: qsTr("Minimise to tray instead of the taskbar")
+                    enabled: Settings.trayAvailable
+                    checked: Settings.minimizeToTray
+                    onToggled: Settings.minimizeToTray = checked
                     KeyNavigation.tab: minimiseOnCloseCheckbox
                 }
                 CheckBox {
                     id: minimiseOnCloseCheckbox
                     text: qsTr("Minimise on close")
+                    enabled: Settings.trayAvailable
+                    checked: Settings.minimizeOnClose
+                    onToggled: Settings.minimizeOnClose = checked
                     KeyNavigation.tab: confirmOnCloseCheckbox
                 }
                 CheckBox {
                     id: confirmOnCloseCheckbox
+                    objectName: "confirmOnCloseCheckbox"
                     text: qsTr("Confirm on close")
+                    enabled: Settings.confirmOnCloseAvailable
+                    checked: Settings.confirmOnClose
+                    onToggled: Settings.confirmOnClose = checked
                     KeyNavigation.tab: disableTransactionNotificationCheckbox
                 }
                 Rectangle {
@@ -826,11 +1015,15 @@ Rectangle{
                 CheckBox {
                     id: disableTransactionNotificationCheckbox
                     text: qsTr("Disable transaction notifications")
+                    checked: Settings.disableTrxNotifications
+                    onToggled: Settings.disableTrxNotifications = checked
                     KeyNavigation.tab: disablePollNotificationCheckbox
                 }
                 CheckBox {
                     id: disablePollNotificationCheckbox
                     text: qsTr("Disable poll notifications")
+                    checked: Settings.disablePollNotifications
+                    onToggled: Settings.disablePollNotifications = checked
                     KeyNavigation.tab: minimiseToTrayCheckbox
                 }
             }
@@ -861,7 +1054,11 @@ Rectangle{
                 }
                 ComboBox {
                     id: languageCombobox
-                    model: [qsTr("System Default"),"American English", "British English", "Australian English", "Francais"]
+                    model: Settings.languages
+                    textRole: "text"
+                    valueRole: "value"
+                    currentIndex: indexOfValue(Settings.language)
+                    onActivated: Settings.language = currentValue
                     KeyNavigation.tab: themeCombobox
                 }
                 Text {
@@ -872,9 +1069,25 @@ Rectangle{
                 }
                 ComboBox {
                     id: themeCombobox
-                    currentIndex: MMPTheme.theme
+                    objectName: "themeCombobox"
+                    currentIndex: Settings.theme === "light" ? 0 : 1
                     model: [qsTr("Light"), qsTr("Dark")]
-                    onCurrentIndexChanged: MMPTheme.theme = currentIndex
+                    onActivated: Settings.theme = (currentIndex === 0 ? "light" : "dark")
+                    KeyNavigation.tab: unitCombobox
+                }
+                Text {
+                    id: unitLabel
+                    text: qsTranslate("OptionsDialog", "&Unit to show amounts in:").replace("&", "")
+                    color: MMPTheme.textColor
+                    Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
+                }
+                ComboBox {
+                    id: unitCombobox
+                    model: Settings.displayUnits
+                    textRole: "text"
+                    valueRole: "value"
+                    currentIndex: indexOfValue(Settings.displayUnit)
+                    onActivated: Settings.displayUnit = currentValue
                     KeyNavigation.tab: addressesInTransactionsCheckbox
                 }
                 Rectangle {
@@ -896,12 +1109,16 @@ Rectangle{
                 CheckBox {
                     id: addressesInTransactionsCheckbox
                     text: qsTr("Display addresses in transactions list")
+                    checked: Settings.displayAddresses
+                    onToggled: Settings.displayAddresses = checked
                     Layout.columnSpan: 2
                     KeyNavigation.tab: coinControlCheckbox
                 }
                 CheckBox {
                     id: coinControlCheckbox
                     text: qsTr("Display advanced coin control features")
+                    checked: Settings.coinControlFeatures
+                    onToggled: Settings.coinControlFeatures = checked
                     Layout.columnSpan: 2
                     KeyNavigation.tab: languageCombobox
                 }
