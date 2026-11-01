@@ -22,6 +22,9 @@
 #include <qt/quick/qmlfrontend.h>
 #include <qt/quick/recenttransactions.h>
 #include <qt/quick/researchersummary.h>
+#include <qt/quick/settingsadapter.h>
+#include <qt/quick/shelladapter.h>
+#include <qt/quick/sidestakelistmodel.h>
 #include <qt/quick/votingsummary.h>
 #include <qt/quick/walletsummary.h>
 #include <qt/walletmodel.h>
@@ -1135,11 +1138,13 @@ void QmlStatusAdapterTests::detachOrder()
         fe.attachModels(harness.bundle());
         QVERIFY(SettleSerial(fe.callRunner()));
         const int level = fe.provider().clientStatus().connectionLevel();
+        QVERIFY2(qml_test::PumpUntil([&] { return fe.provider().settings().loaded(); }, 2s), "Settings");
 
         // detachWallet destroys the OverviewTxModel, which unregisters the
         // view while the transaction source is alive.
         fe.detachModels();
         QCOMPARE(harness.tx_source.unregisteredViews(), std::vector<int>{GRC::VIEW_OVERVIEW});
+        QVERIFY(!fe.provider().settings().loaded());
 
         // A detached adapter no longer follows its model.
         emit harness.client.numConnectionsChanged(3);
@@ -1155,12 +1160,17 @@ void QmlStatusAdapterTests::detachOrder()
         RecentTransactions recent(1);
         VotingSummary voting(1);
         AboutInfo about(1);
+        qml_test::QueuingFrontEnd shell_frontend;
+        ShellAdapter shell(shell_frontend, 1);
+        SettingsAdapter settings(1, shell);
         status.detach();
         summary.detach();
         researcher.detach();
         recent.detach();
         voting.detach();
         about.detach();
+        settings.detach();
+        QVERIFY(!settings.loaded());
     }
 
     // Every invokable is safe on a front end that never attached.
@@ -1181,6 +1191,17 @@ void QmlStatusAdapterTests::detachOrder()
         QVERIFY(!provider.walletSummary().copyAmount(WalletSummary::Balance));
         provider.walletSummary().setMaskValues(true);
         provider.aboutInfo().refreshUpdateCheck();
+        SettingsAdapter& settings = provider.settings();
+        settings.reload();
+        QVERIFY(!settings.apply());
+        settings.discard();
+        QVERIFY(!settings.openConfigFile());
+        SideStakeListModel& side_stakes = settings.sideStakeList();
+        QVERIFY(!side_stakes.add(QStringLiteral("x"), QStringLiteral("1"), QString()));
+        QVERIFY(!side_stakes.edit(0, QStringLiteral("1"), QString()));
+        QVERIFY(!side_stakes.remove(0));
+        side_stakes.refresh();
+        QVERIFY(!settings.loaded());
         qml_test::PumpFor(50ms);
         QVERIFY(qml_test::g_rethrown.empty());
     }
@@ -1220,6 +1241,7 @@ void QmlStatusAdapterTests::attachModelsAttachesAll()
              "AboutInfo");
     QVERIFY2(qml_test::PumpUntil([&] { return provider.recentTransactions().rowCount() == 2; }, 2s),
              "RecentTransactions");
+    QVERIFY2(qml_test::PumpUntil([&] { return provider.settings().loaded(); }, 2s), "Settings");
 }
 
 void QmlStatusAdapterTests::clipboardStrips()

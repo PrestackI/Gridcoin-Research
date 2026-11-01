@@ -59,7 +59,8 @@ inline QmlFrontEnd::Callbacks CountingCallbacks(std::atomic<int>& disconnects)
             return what.find("interrupted by disconnect") != std::string::npos ||
                    what.find("called after disconnect") != std::string::npos;
         },
-        [&disconnects](const std::string&) { ++disconnects; }};
+        [&disconnects](const std::string&) { ++disconnects; },
+        {}};
 }
 
 } // namespace qml_test

@@ -7,6 +7,7 @@
 #endif
 
 #include <qt/guifrontend.h>
+#include <qt/guiutil.h>
 #include <qt/quick/qmlengine.h>
 #include <qt/quick/qmlfonts.h>
 #include <qt/quick/qmlfrontend.h>
@@ -76,7 +77,10 @@ std::unique_ptr<GuiFrontEnd> MakeQmlFrontEnd()
         IsDaemonDisconnectMessage,
         [](const std::string&) {
             QuitOnDaemonConnectionLost("a QML front-end call was interrupted by the daemon disconnecting");
-        }};
+        },
+        // Read when the settings screen opens the file, after GuiMain has
+        // read the configuration.
+        [] { return GUIUtil::boostPathToQString(GetConfigFile()); }};
     return std::make_unique<QmlFrontEnd>(QUrl(QML_ROOT_URL), std::move(callbacks));
 }
 

@@ -102,7 +102,8 @@ std::unique_ptr<GuiFrontEnd> MakeUnloadableQmlFrontEnd()
         IsDaemonDisconnectMessage,
         [](const std::string&) {
             QuitOnDaemonConnectionLost("a QML front-end call was interrupted by the daemon disconnecting");
-        }};
+        },
+        {}};
     return std::make_unique<QmlFrontEnd>(QUrl(QStringLiteral("qrc:/qmltest/missing.qml")), std::move(callbacks));
 }
 

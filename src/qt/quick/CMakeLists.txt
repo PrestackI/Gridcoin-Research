@@ -40,6 +40,12 @@ qt_add_qml_module(gridcoinqml
         aboutinfo.h
         clipboard.cpp
         clipboard.h
+        settingsadapter.cpp
+        settingsadapter.h
+        sidestakelistmodel.cpp
+        sidestakelistmodel.h
+        hostlocalpaths.cpp
+        hostlocalpaths.h
 )
 target_include_directories(gridcoinqml PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gridcoinqml PUBLIC
@@ -47,6 +53,16 @@ target_link_libraries(gridcoinqml PUBLIC
     ${QT}::Qml
     ${QT}::Quick
 )
+
+# Settings tells the screen whether UPnP was compiled in, as OptionsModel
+# does: the same definition src/qt/CMakeLists.txt gives gridcoinqt.
+if(ENABLE_UPNP)
+    if(DEFAULT_UPNP)
+        target_compile_definitions(gridcoinqml PRIVATE USE_UPNP=1)
+    else()
+        target_compile_definitions(gridcoinqml PRIVATE USE_UPNP=0)
+    endif()
+endif()
 
 # The QML front end's executable: the GUI composition root (gridcoinguimain)
 # with QmlFrontEnd and the carried QML modules. Built only with ENABLE_QML.

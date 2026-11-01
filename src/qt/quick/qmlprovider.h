@@ -11,8 +11,10 @@ class AboutInfo;
 class ClientStatus;
 class Clipboard;
 class GuiFrontEnd;
+class HostLocalPaths;
 class RecentTransactions;
 class ResearcherSummary;
+class SettingsAdapter;
 class ShellAdapter;
 class SplashAdapter;
 class VotingSummary;
@@ -47,6 +49,8 @@ public:
     VotingSummary& votingSummary();
     AboutInfo& aboutInfo();
     Clipboard& clipboard();
+    SettingsAdapter& settings();
+    HostLocalPaths& hostLocalPaths();
     int marker() const;
 
 private:
@@ -60,6 +64,8 @@ private:
     std::unique_ptr<VotingSummary> m_voting_summary;
     std::unique_ptr<AboutInfo> m_about_info;
     std::unique_ptr<Clipboard> m_clipboard;
+    std::unique_ptr<HostLocalPaths> m_host_local_paths;
+    std::unique_ptr<SettingsAdapter> m_settings;
 };
 
 #endif // BITCOIN_QT_QUICK_QMLPROVIDER_H

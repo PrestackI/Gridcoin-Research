@@ -61,15 +61,19 @@ public:
     //! QuitOnDaemonConnectionLost). Injected, so this module does not link the
     //! composition root. Quit needs no callback: RequestGuiQuit calls
     //! requestQuit() on the registered front end, and the module's own quit
-    //! paths call it directly.
+    //! paths call it directly. `config_file` answers the configuration file's
+    //! path when it is asked for (GetConfigFile, which this module cannot
+    //! include); it may be empty, and the settings screen then cannot open the
+    //! file.
     struct Callbacks
     {
         std::function<bool(const std::string&)> is_disconnect;
         std::function<void(const std::string&)> on_disconnect;
+        std::function<QString()> config_file;
     };
 
-    //! Throws std::invalid_argument naming the empty member if either callback
-    //! is empty.
+    //! Throws std::invalid_argument naming the empty member if is_disconnect
+    //! or on_disconnect is empty.
     QmlFrontEnd(QUrl root_url, Callbacks callbacks);
     ~QmlFrontEnd() override;
 
@@ -88,8 +92,8 @@ public:
     void destroySplash() override;
     void showBuildMismatchWarning(const QString& gui_commit, const QString& node_commit) override;
     void setIpcConnectionInfo(const GuiIpcInfo& info) override;
-    //! Stores the model pointers and tells the shell whether closing the window
-    //! minimizes it.
+    //! Stores the model pointers and attaches the provider's adapters; the
+    //! settings adapter tells the shell the window options.
     void attachModels(const ModelBundle& models) override;
     //! Asks the root to show its main window and sets Shell.shown. A quit
     //! requested before the event loop runs is posted again here, so the event

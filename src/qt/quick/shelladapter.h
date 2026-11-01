@@ -83,7 +83,12 @@ public:
     //! Sets quitRequested to true.
     void setQuitRequested();
     //! Whether closing the main window hides it to the tray instead of quitting.
+    //! Sets only that option; see setWindowOptions().
     void setMinimizeOnClose(bool minimize_on_close);
+    //! Stores the three window options. Only minimize-on-close is read today,
+    //! by requestClose(); the other two are kept for the window behaviour that
+    //! reads them.
+    void setWindowOptions(bool minimize_to_tray, bool minimize_on_close, bool confirm_on_close);
     //! Replaces the live system-tray check that requestClose() makes (the
     //! default); an empty function restores the default.
     void setTrayAvailableProbe(std::function<bool()> probe);
@@ -115,7 +120,9 @@ private:
     bool m_shown{false};
     bool m_start_minimized{false};
     bool m_quit_requested{false};
+    bool m_minimize_to_tray{false};
     bool m_minimize_on_close{false};
+    bool m_confirm_on_close{false};
     //! Whether a system tray is available; see setTrayAvailableProbe().
     std::function<bool()> m_tray_available{&QSystemTrayIcon::isSystemTrayAvailable};
     GuiIpcInfo m_ipc;

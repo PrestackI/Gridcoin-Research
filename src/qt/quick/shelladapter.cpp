@@ -72,6 +72,13 @@ void ShellAdapter::setMinimizeOnClose(bool minimize_on_close)
     m_minimize_on_close = minimize_on_close;
 }
 
+void ShellAdapter::setWindowOptions(bool minimize_to_tray, bool minimize_on_close, bool confirm_on_close)
+{
+    m_minimize_to_tray = minimize_to_tray;
+    m_minimize_on_close = minimize_on_close;
+    m_confirm_on_close = confirm_on_close;
+}
+
 void ShellAdapter::setTrayAvailableProbe(std::function<bool()> probe)
 {
     if (probe) {

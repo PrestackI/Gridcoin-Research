@@ -33,14 +33,47 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 
 namespace qml_test {
+
+//! The sidestake fake with its edit commands counted and its settings
+//! notification kept, so a test can tell whether a command reached it.
+class RecordingSideStakeManager : public qt_test::FakeSideStakeManager
+{
+public:
+    int m_set_allocation_calls{0};
+    int m_set_description_calls{0};
+    //! The last callback handleRwSettingsUpdated was given.
+    interfaces::RwSettingsUpdatedFn m_rw_settings_fn;
+
+    interfaces::SideStakeEditResult setAllocation(const std::string& address, double allocation_percent) override
+    {
+        ++m_set_allocation_calls;
+        return FakeSideStakeManager::setAllocation(address, allocation_percent);
+    }
+    interfaces::SideStakeEditResult setDescription(const std::string& address,
+                                                   const std::string& description) override
+    {
+        ++m_set_description_calls;
+        return FakeSideStakeManager::setDescription(address, description);
+    }
+    std::unique_ptr<interfaces::Handler> handleRwSettingsUpdated(interfaces::RwSettingsUpdatedFn fn) override
+    {
+        m_rw_settings_fn = std::move(fn);
+        return interfaces::MakeCleanupHandler([] {});
+    }
+};
 
 //! Fake interfaces::Node for the status adapters: settable values for every
 //! read they make. getWarnings, getScraperConvergenceSnapshot and
 //! checkForLatestUpdate can each be held at their start on a Latch, and record
 //! their calling thread and count their calls; getSettingBool counts its
-//! "disableupdatecheck" reads.
+//! "disableupdatecheck" reads. The settings reads and writes take the lock,
+//! because the settings adapter reads them on the serial lane; a test reads
+//! the recorded batches through changeCalls(). handleRwSettingsUpdated keeps
+//! its callback, which fireRwSettingsUpdated() calls.
 class StatusFakeNode : public qt_test::FakeNode
 {
 public:
@@ -111,7 +144,49 @@ public:
     bool getSettingBool(const std::string& name, bool default_val) override
     {
         if (name == "disableupdatecheck") ++m_disable_update_check_reads;
+        std::lock_guard<std::mutex> lock(m_mutex);
         return FakeNode::getSettingBool(name, default_val);
+    }
+    int64_t getSettingInt(const std::string& name, int64_t default_val) override
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return FakeNode::getSettingInt(name, default_val);
+    }
+    std::string getSettingStr(const std::string& name, const std::string& default_val) override
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return FakeNode::getSettingStr(name, default_val);
+    }
+    interfaces::SettingChangeResult changeSettings(
+        const std::vector<std::pair<std::string, std::string>>& settings) override
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return FakeNode::changeSettings(settings);
+    }
+    //! Sets one stored setting, as another writer would.
+    void setSetting(const std::string& name, const std::string& value)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_settings[name] = value;
+    }
+    //! A copy of the recorded changeSettings batches.
+    std::vector<std::vector<std::pair<std::string, std::string>>> changeCalls() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_change_calls;
+    }
+    std::unique_ptr<interfaces::Handler> handleRwSettingsUpdated(RwSettingsUpdatedFn fn) override
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_rw_settings_fn = std::move(fn);
+        return interfaces::MakeCleanupHandler([] {});
+    }
+    //! Calls the stored settings callback, as the node does after a write;
+    //! does nothing when none is stored.
+    void fireRwSettingsUpdated()
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_rw_settings_fn) m_rw_settings_fn();
     }
     std::string getWarnings() override
     {
@@ -145,6 +220,7 @@ private:
     interfaces::ScraperConvergenceSnapshot m_scraper_snapshot;
     interfaces::LatestVersionInfo m_latest_version;
     std::thread::id m_update_check_thread{};
+    RwSettingsUpdatedFn m_rw_settings_fn;
 };
 
 //! How many ModelHarnessIsolation objects are alive (at most one).
@@ -246,7 +322,7 @@ public:
 
     ModelHarnessIsolation isolation;
     StatusFakeNode node;
-    qt_test::FakeSideStakeManager side_stakes;
+    RecordingSideStakeManager side_stakes;
     OptionsModel options{node, side_stakes};
     qt_test::FakeStakingStatus staking;
     std::unique_ptr<qt_test::FakeWallet> wallet_fake;

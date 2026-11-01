@@ -23,6 +23,8 @@ add_executable(test_gridcoin-qml
     statusadaptertests.h
     overviewwiringtests.cpp
     overviewwiringtests.h
+    settingsadaptertests.cpp
+    settingsadaptertests.h
 )
 
 # Outside bin/: bin/ holds the modules' on-disk qmldir files, which would
@@ -51,6 +53,15 @@ target_link_libraries(test_gridcoin-qml PRIVATE
     gridcoinqt
     gridcoin_util
 )
+
+# The settings tests compare upnpAvailable with what was compiled in.
+if(ENABLE_UPNP)
+    if(DEFAULT_UPNP)
+        target_compile_definitions(test_gridcoin-qml PRIVATE USE_UPNP=1)
+    else()
+        target_compile_definitions(test_gridcoin-qml PRIVATE USE_UPNP=0)
+    endif()
+endif()
 
 # The offscreen platform plugin import: see the long comment in
 # src/qt/test/CMakeLists.txt.

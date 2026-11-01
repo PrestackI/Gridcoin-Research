@@ -7,8 +7,10 @@
 #include <qt/quick/aboutinfo.h>
 #include <qt/quick/clientstatus.h>
 #include <qt/quick/clipboard.h>
+#include <qt/quick/hostlocalpaths.h>
 #include <qt/quick/recenttransactions.h>
 #include <qt/quick/researchersummary.h>
+#include <qt/quick/settingsadapter.h>
 #include <qt/quick/shelladapter.h>
 #include <qt/quick/splashadapter.h>
 #include <qt/quick/votingsummary.h>
@@ -37,6 +39,9 @@ QmlProvider::QmlProvider(GuiFrontEnd& frontend)
     m_recent_transactions = std::make_unique<RecentTransactions>(m_marker);
     m_voting_summary = std::make_unique<VotingSummary>(m_marker);
     m_about_info = std::make_unique<AboutInfo>(m_marker);
+    m_host_local_paths = std::make_unique<HostLocalPaths>();
+    m_settings = std::make_unique<SettingsAdapter>(m_marker, *m_shell);
+    m_settings->setHostLocalPaths(m_host_local_paths.get());
 }
 
 QmlProvider::~QmlProvider()
@@ -97,6 +102,16 @@ AboutInfo& QmlProvider::aboutInfo()
 Clipboard& QmlProvider::clipboard()
 {
     return *m_clipboard;
+}
+
+SettingsAdapter& QmlProvider::settings()
+{
+    return *m_settings;
+}
+
+HostLocalPaths& QmlProvider::hostLocalPaths()
+{
+    return *m_host_local_paths;
 }
 
 int QmlProvider::marker() const

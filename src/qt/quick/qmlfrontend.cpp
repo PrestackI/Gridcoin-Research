@@ -9,9 +9,11 @@
 #include <qt/optionsmodel.h>
 #include <qt/quick/aboutinfo.h>
 #include <qt/quick/clientstatus.h>
+#include <qt/quick/hostlocalpaths.h>
 #include <qt/quick/qmlengine.h>
 #include <qt/quick/recenttransactions.h>
 #include <qt/quick/researchersummary.h>
+#include <qt/quick/settingsadapter.h>
 #include <qt/quick/shelladapter.h>
 #include <qt/quick/splashadapter.h>
 #include <qt/quick/votingsummary.h>
@@ -94,6 +96,9 @@ QObject* QmlFrontEnd::construct()
         throw std::logic_error("QmlFrontEnd::construct() called twice");
     }
     m_constructed = true;
+    if (m_callbacks.config_file) {
+        m_provider->hostLocalPaths().setConfigFileProbe(m_callbacks.config_file);
+    }
     // First, so a native window exists whatever the root does; create() makes
     // it now, not on the first winId() call.
     m_anchor = std::make_unique<QWindow>();
@@ -170,15 +175,13 @@ void QmlFrontEnd::attachModels(const ModelBundle& models)
     m_voting = &models.voting;
     m_psgt = models.psgt;
 
-    OptionsModel* options = models.client.getOptionsModel();
-    shell().setMinimizeOnClose(options && options->getMinimizeOnClose());
-
     m_provider->clientStatus().attach(models.client, *m_runner);
     m_provider->walletSummary().attach(models.wallet, models.client.getOptionsModel(), *m_runner);
     m_provider->researcherSummary().attach(models.researcher, models.client.getOptionsModel());
     m_provider->recentTransactions().attach(models.wallet, models.client.getOptionsModel(), *m_runner);
     m_provider->votingSummary().attach(models.voting, *m_runner);
     m_provider->aboutInfo().attach(models.client, *m_runner);
+    m_provider->settings().attach(models.client, models.client.getOptionsModel(), *m_runner);
 }
 
 void QmlFrontEnd::showMain(bool minimized)
@@ -247,6 +250,7 @@ void QmlFrontEnd::detachClient()
 {
     m_client = nullptr;
     shell().setMinimizeOnClose(false);
+    m_provider->settings().detach();
     m_provider->clientStatus().detach();
     m_provider->aboutInfo().detach();
 }
