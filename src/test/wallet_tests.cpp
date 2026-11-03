@@ -2347,7 +2347,7 @@ BOOST_AUTO_TEST_CASE(multiple_state_transitions)
     }
 }
 
-// Single-threaded test that drives CWallet::transactionAddedToMempool
+// Single-threaded test that drives CWallet::TransactionAddedToMempool
 // directly; that method is EXCLUSIVE_LOCKS_REQUIRED(cs_main)
 // LOCKS_EXCLUDED(cs_wallet). The test holds cs_wallet but not cs_main,
 // which mirrors the wallet-internal callback shape we're pinning here.
@@ -2358,7 +2358,7 @@ BOOST_AUTO_TEST_CASE(multiple_state_transitions)
 #endif
 BOOST_AUTO_TEST_CASE(transaction_added_to_mempool_preserves_inmempool_state)
 {
-    // Pins the invariant CommitTransaction relies on at wallet.cpp:3324:
+    // Pins the invariant CWallet::CommitTransaction relies on:
     // a wtx that enters mapWallet with TxStateInMempool must remain in
     // TxStateInMempool after AcceptToMemoryPool fires the
     // transactionAddedToMempool callback (main.cpp:576) for the originating
@@ -2371,7 +2371,7 @@ BOOST_AUTO_TEST_CASE(transaction_added_to_mempool_preserves_inmempool_state)
 
     // Add a key so the tx's output is IsMine -- otherwise
     // AddToWalletIfInvolvingMe short-circuits at the fIsMine==false check
-    // (wallet.cpp:1121) and never reaches the branch under test.
+    // and never reaches the branch under test.
     CKey key;
     key.MakeNewKey(true);
     {
@@ -2390,8 +2390,8 @@ BOOST_AUTO_TEST_CASE(transaction_added_to_mempool_preserves_inmempool_state)
     {
         LOCK(test_wallet.cs_wallet);
 
-        // Mirror CommitTransaction:3324 then the AddToWallet insertion at
-        // wallet.cpp:3328 -- we insert directly rather than calling
+        // Mirror CommitTransaction's SetTxState(TxStateInMempool{}) then its
+        // AddToWallet insertion -- we insert directly rather than calling
         // AddToWallet to avoid the cs_main / CWalletDB scaffolding it
         // requires, which isn't what's under test.
         CWalletTx wtxNew(&test_wallet, tx);
@@ -4952,7 +4952,7 @@ BOOST_AUTO_TEST_CASE(psgt_imported_inactive_tx_promotes_to_mempool)
     BOOST_CHECK(loaded.isInactive());
     BOOST_CHECK_EQUAL(loaded.state<TxStateInactive>()->m_abandoned, false);
 
-    // Broadcast path: the transition the production transactionAddedToMempool
+    // Broadcast path: the transition the production TransactionAddedToMempool
     // callback drives. After it, the variant truly holds InMempool — the
     // Inactive payload must not leak.
     loaded.SetTxState(TxStateInMempool{});
@@ -4964,9 +4964,9 @@ BOOST_AUTO_TEST_CASE(psgt_imported_tx_confirm_then_reorg)
 {
     // Full post-import lifecycle:
     //   Inactive{false}  (imported, not yet broadcast)
-    //   -> InMempool     (transactionAddedToMempool)
-    //   -> Confirmed     (blockConnected)
-    //   -> Inactive{false} (blockDisconnected and not re-accepted to mempool)
+    //   -> InMempool     (TransactionAddedToMempool)
+    //   -> Confirmed     (BlockConnected)
+    //   -> Inactive{false} (BlockDisconnected and not re-accepted to mempool)
     CWalletTx wtx;
 
     wtx.SetTxState(TxStateInactive{false});
@@ -4982,7 +4982,7 @@ BOOST_AUTO_TEST_CASE(psgt_imported_tx_confirm_then_reorg)
     BOOST_CHECK(wtx.state<TxStateConfirmed>()->m_confirmed_block_hash == bh);
     BOOST_CHECK_EQUAL(wtx.state<TxStateConfirmed>()->m_position_in_block, 7);
 
-    // Reorg: blockDisconnected. The wallet drops back to InMempool if the tx
+    // Reorg: BlockDisconnected. The wallet drops back to InMempool if the tx
     // is re-accepted there, otherwise Inactive{false}. We simulate the latter.
     wtx.SetTxState(TxStateInactive{false});
     BOOST_CHECK(wtx.isInactive());
