@@ -489,8 +489,7 @@ void PurgeOrphanedBlockIndexEntries(CTxDB& txdb, std::vector<CBlockIndex*>& aban
     // P2P-delivered block tripped `assert(!pindexBest->pnext)` in
     // DisconnectBlocksBatch because heap corruption from the bogus `delete`
     // calls had overwritten pindex_target's pnext slot with garbage that
-    // happened to dereference as a valid-looking CBlockIndex pointer. See
-    // .claude/memory/reference_block_index_pool.md.)
+    // happened to dereference as a valid-looking CBlockIndex pointer.)
     //
     // The cost of not freeing is that the abandoned pool slots remain
     // allocated forever -- a small permanent leak per recovery event, at most
