@@ -24,6 +24,8 @@
 #include <QQmlError>
 #include <QQmlExpression>
 #include <QQuickItem>
+#include <QQuickWindow>
+#include <QRectF>
 #include <QString>
 #include <QStringList>
 #include <QThreadPool>
@@ -303,6 +305,18 @@ void QmlSettingsWiringTests::screenSaveAppliesDiscardReverts()
         QVERIFY(Press(add));
         QCOMPARE(QString::fromStdString(harness.side_stakes.m_last_add_address), ADDRESS);
 
+        // (k) The contract-change box is saved to the node.
+        QObject* contract = Find(view, "contractChangeCheckbox");
+        QObject* contract_save = Find(view, "settingsSaveButton");
+        QVERIFY(contract);
+        QVERIFY(contract_save);
+        QVERIFY(!contract->property("checked").toBool());
+        QVERIFY(Toggle(contract));
+        const int contract_before = settings.seedGeneration();
+        QVERIFY(Press(contract_save));
+        QVERIFY2(SeedAfter(settings, contract_before), "Save posted no seed");
+        QCOMPARE(BatchesNaming(harness.node, "contractchangetoinputaddress"), 1);
+
         // (a) Save submits the toggled box; Discard drops a second toggle.
         // Without UPnP compiled in, the box is disabled and not driven.
         QVERIFY(SelectTab(view, "networkSettingsTabButton"));
@@ -410,6 +424,33 @@ void QmlSettingsWiringTests::screenSaveAppliesDiscardReverts()
     }
     if (QTest::currentTestFailed()) return;
 
+    // (j) The Display tab's two lists open on the stored values: a stored
+    // unit other than the first, and the default language.
+    {
+        NoQuitOnLastWindow no_quit;
+        qml_test::ModelHarness harness;
+        qml_test::ScopeExit reap(ReapPool);
+        harness.options.setData(harness.options.index(OptionsModel::DisplayUnit), int{BitcoinUnits::mBTC},
+                                Qt::EditRole);
+        std::atomic<int> disconnects{0};
+        qml_test::CountingQuitFrontEnd fe(ROOT_URL, qml_test::CountingCallbacks(disconnects));
+        qml_test::ScopeExit detach([&fe] { fe.detachModels(); });
+        QVERIFY2(Preamble(fe, harness), "the root did not load");
+        SettingsAdapter& settings = fe.provider().settings();
+        QObject* view = OpenSettings(fe);
+        QVERIFY2(view, "the settings screen did not open");
+        QCOMPARE(settings.displayUnit(), int{BitcoinUnits::mBTC});
+        QVERIFY(settings.language().isEmpty());
+        QVERIFY(SelectTab(view, "displaySettingsTabButton"));
+        QObject* unit = Find(view, "unitCombobox");
+        QObject* language = Find(view, "languageCombobox");
+        QVERIFY(unit);
+        QVERIFY(language);
+        QCOMPARE(unit->property("currentText").toString(), BitcoinUnits::name(BitcoinUnits::mBTC));
+        QCOMPARE(language->property("currentIndex").toInt(), 0);
+    }
+    if (QTest::currentTestFailed()) return;
+
     // (i) A refused row and a refused sidestake show their texts.
     {
         NoQuitOnLastWindow no_quit;
@@ -417,6 +458,9 @@ void QmlSettingsWiringTests::screenSaveAppliesDiscardReverts()
         qml_test::ScopeExit reap(ReapPool);
         harness.node.m_fail_changes = true;
         harness.side_stakes.m_edit_result.status = interfaces::SideStakeEditStatus::INVALID_ALLOCATION;
+        g_messages.clear();
+        g_previous_handler = qInstallMessageHandler(CollectMessage);
+        qml_test::ScopeExit restore_handler([] { qInstallMessageHandler(g_previous_handler); });
         std::atomic<int> disconnects{0};
         qml_test::CountingQuitFrontEnd fe(ROOT_URL, qml_test::CountingCallbacks(disconnects));
         qml_test::ScopeExit detach([&fe] { fe.detachModels(); });
@@ -446,6 +490,58 @@ void QmlSettingsWiringTests::screenSaveAppliesDiscardReverts()
         QVERIFY(Type(new_description, QStringLiteral("new")));
         QVERIFY(Press(add));
         QCOMPARE(side_status->property("text").toString(), AllocationText());
+
+        // The refusal wraps over several lines. It sits under the table, not
+        // in the table's one-line footer: the add row stays inside the table,
+        // and the controls below start under the text, so nothing covers the
+        // add row's fields.
+        auto* table = qobject_cast<QQuickItem*>(Find(view, "sideStakeRect"));
+        auto* below = qobject_cast<QQuickItem*>(Find(view, "secondContentGrid"));
+        auto* address_item = qobject_cast<QQuickItem*>(new_address);
+        auto* status_item = qobject_cast<QQuickItem*>(side_status);
+        QVERIFY(table);
+        QVERIFY(below);
+        QVERIFY(address_item);
+        QVERIFY(status_item);
+        // The window gets the size of the live run's window. No frame is
+        // rendered here, so the layouts are polished by hand, innermost
+        // first, before anything is measured.
+        QQuickWindow* window = table->window();
+        QVERIFY(window);
+        window->resize(720, 840);
+        qml_test::PumpFor(100ms);
+        for (QQuickItem* item : {status_item->parentItem(), address_item->parentItem(), below, table}) {
+            if (item) item->ensurePolished();
+        }
+        const auto scene_box = [](QQuickItem* item) {
+            return item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
+        };
+        const auto describe = [](const char* name, const QRectF& box) {
+            return QStringLiteral("%1 y %2..%3 x %4..%5")
+                .arg(QLatin1String(name))
+                .arg(box.top())
+                .arg(box.bottom())
+                .arg(box.left())
+                .arg(box.right());
+        };
+        const QString boxes = QStringList{describe("table", scene_box(table)),
+                                          describe("address field", scene_box(address_item)),
+                                          describe("refusal text", scene_box(status_item)),
+                                          describe("controls below", scene_box(below))}
+                                  .join(QStringLiteral("; "));
+        QVERIFY2(scene_box(address_item).bottom() <= scene_box(table).bottom(),
+                 qPrintable(QStringLiteral("the address field reaches below the table: ") + boxes));
+        QVERIFY2(scene_box(status_item).top() >= scene_box(table).bottom(),
+                 qPrintable(QStringLiteral("the refusal text overlaps the table: ") + boxes));
+        QVERIFY2(scene_box(below).top() >= scene_box(status_item).bottom(),
+                 qPrintable(QStringLiteral("the controls below overlap the refusal text: ") + boxes));
+        // The checks above measured a wrapped text: more than one line.
+        QVERIFY2(scene_box(status_item).height() > 20, qPrintable(QStringLiteral("one line only: ") + boxes));
+        QStringList problems;
+        for (const QString& message : std::as_const(g_messages)) {
+            if (message.contains(QStringLiteral("qrc:/qt/qml/Gridcoin/App/SettingsView.qml"))) problems << message;
+        }
+        QVERIFY2(problems.isEmpty(), qPrintable(problems.join(QLatin1Char('\n'))));
 
         QObject* save = Find(view, "settingsSaveButton");
         QObject* status = Find(view, "settingsStatusLabel");

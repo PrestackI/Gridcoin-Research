@@ -350,6 +350,8 @@ Rectangle{
             contentWidth: availableWidth
             contentHeight: contentColumn.implicitHeight + contentColumn.anchors.topMargin +
                            sideStakeRect.implicitHeight + sideStakeRect.anchors.topMargin +
+                           (sideStakeStatusLabel.visible ? sideStakeStatusLabel.height +
+                                                           sideStakeStatusLabel.anchors.topMargin : 0) +
                            secondContentGrid.implicitHeight + secondContentGrid.anchors.topMargin + 20
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             GridLayout {
@@ -482,6 +484,7 @@ Rectangle{
             }
             Rectangle {
                 id: sideStakeRect
+                objectName: "sideStakeRect"
                 color: "transparent"
                 border.color: MMPTheme.lightBorderColor
                 radius: 4
@@ -724,24 +727,40 @@ Rectangle{
                             placeholderText: qsTranslate("SideStakeTableModel", "Description")
                             background: Item{}
                         }
-                        Label {
-                            id: sideStakeStatusLabel
-                            objectName: "sideStakeStatusLabel"
-                            text: Settings.sideStakes.lastError
-                            wrapMode: Text.WordWrap
-                            color: MMPTheme.textColor
+                        Item {
                             Layout.fillWidth: true
                         }
                     }
                 }
             }
+            // A refused sidestake's text wraps over several lines, so it sits
+            // under the table, not in the footer: the footer is one line high,
+            // and the fields there must stay clear of the controls below.
+            Label {
+                id: sideStakeStatusLabel
+                objectName: "sideStakeStatusLabel"
+                text: Settings.sideStakes.lastError
+                visible: text !== ""
+                wrapMode: Text.WordWrap
+                color: MMPTheme.textColor
+                anchors {
+                    top: sideStakeRect.bottom
+                    left: parent.left
+                    right: parent.right
+                    topMargin: 10
+                    leftMargin: 20
+                    rightMargin: 20
+                }
+            }
             GridLayout {
                 id: secondContentGrid
+                objectName: "secondContentGrid"
                 columns: 2
                 rowSpacing: 20
                 columnSpacing: 10
                 anchors {
-                    top: sideStakeRect.bottom
+                    // Under the refusal text while it shows, else under the table.
+                    top: sideStakeStatusLabel.visible ? sideStakeStatusLabel.bottom : sideStakeRect.bottom
                     left: parent.left
                     right: parent.right
                     topMargin: 20
@@ -814,6 +833,7 @@ Rectangle{
                 }
                 CheckBox {
                     id: contractChangeCheckbox
+                    objectName: "contractChangeCheckbox"
                     text: qsTranslate("OptionsDialog", "Return change to an input address for contract transactions")
                     checked: Settings.contractChangeToInput
                     onToggled: Settings.contractChangeToInput = checked
@@ -1054,10 +1074,13 @@ Rectangle{
                 }
                 ComboBox {
                     id: languageCombobox
+                    objectName: "languageCombobox"
                     model: Settings.languages
                     textRole: "text"
                     valueRole: "value"
-                    currentIndex: indexOfValue(Settings.language)
+                    // indexOfValue() reads the model, which may not be set yet
+                    // when this binding first runs; count makes it run again.
+                    currentIndex: count > 0 ? indexOfValue(Settings.language) : -1
                     onActivated: Settings.language = currentValue
                     KeyNavigation.tab: themeCombobox
                 }
@@ -1083,10 +1106,13 @@ Rectangle{
                 }
                 ComboBox {
                     id: unitCombobox
+                    objectName: "unitCombobox"
                     model: Settings.displayUnits
                     textRole: "text"
                     valueRole: "value"
-                    currentIndex: indexOfValue(Settings.displayUnit)
+                    // As the language list: count makes the binding run again
+                    // once the model is set.
+                    currentIndex: count > 0 ? indexOfValue(Settings.displayUnit) : -1
                     onActivated: Settings.displayUnit = currentValue
                     KeyNavigation.tab: addressesInTransactionsCheckbox
                 }
