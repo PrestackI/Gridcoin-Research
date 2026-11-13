@@ -47,6 +47,7 @@
 
 #include <boost/test/unit_test.hpp>
 
+#include <algorithm>
 #include <optional>
 #include <set>
 #include <string>
@@ -990,8 +991,9 @@ BOOST_FIXTURE_TEST_CASE(advertising_again_replaces_an_advertisement_that_never_c
 
 //! Marks every unspent output of pwalletMain spent, except the ones given, and
 //! puts them back however the case exits: a wallet with only those coins, for
-//! a case that needs a small balance. A second wallet would need its own key
-//! pool, which the test binary's shared mock database cannot keep apart.
+//! a case that needs a small balance or a known set of inputs. A second wallet
+//! would need its own key pool, which the test binary's shared mock database
+//! cannot keep apart.
 struct OnlyTheseCoins
 {
     std::vector<COutPoint> m_hidden;
@@ -1029,6 +1031,24 @@ struct OnlyTheseCoins
         }
     }
 };
+
+//! The largest coin pwalletMain can spend, from the set a send selects from.
+//! It covers an advertisement: the burn and a fee of a few steps.
+static COutPoint LargestSpendableCoin()
+{
+    LOCK2(cs_main, pwalletMain->cs_wallet);
+
+    std::vector<COutput> coins;
+    pwalletMain->AvailableCoins(coins, true, nullptr, false);
+    BOOST_REQUIRE(!coins.empty());
+
+    const auto largest = std::max_element(coins.begin(), coins.end(), [](const COutput& a, const COutput& b) {
+        return a.tx->vout[a.i].nValue < b.tx->vout[b.i].nValue;
+    });
+    BOOST_REQUIRE(largest->tx->vout[largest->i].nValue >= 2 * COIN);
+
+    return COutPoint(largest->tx->GetHash(), largest->i);
+}
 
 //! A wallet with no more than one advertisement's worth of coins can still
 //! replace its stale advertisement: the coins it holds come back before the
@@ -1264,7 +1284,7 @@ struct RenewableBeacon
 
 } // anonymous namespace
 
-//! The automated renewal pays the minimum fee for its size.
+//! The automated renewal from one coin pays the minimum fee for its size.
 //!
 //! End to end, from the renewal's access to the pool, on pwalletMain: the
 //! wallets these cases encrypt hold no database, and so cannot commit a send.
@@ -1290,6 +1310,13 @@ BOOST_FIXTURE_TEST_CASE(renewal_pays_minimum_fee, grc_test::WalletTxScope)
     ForcedResearcher forced(cpid_hex);
     const grc_test::TransactionFeeGuard configured_fee(COIN / 10);
 
+    // The renewal pays RenewalMinimumFee, which sizes each input at its
+    // largest signature, so over many inputs it can come out a step above
+    // GetMinFee at the signed size. One coin keeps the exact relation checked
+    // below, whatever coins earlier cases left in the wallet.
+    const OnlyTheseCoins only({LargestSpendableCoin()});
+    BOOST_REQUIRE(pwalletMain->GetBalance() >= COIN);
+
     const StakingKeyAccess renewal_access = StakingKeyAccessTestPeer::Make();
     const GRC::AdvertiseBeaconResult result =
         GRC::Researcher::Get()->AdvertiseBeacon(/*force=*/false, &renewal_access);
@@ -1311,6 +1338,7 @@ BOOST_FIXTURE_TEST_CASE(renewal_pays_minimum_fee, grc_test::WalletTxScope)
         size = entry.GetTxSize();
     }
 
+    BOOST_REQUIRE_EQUAL(renewal->vin.size(), 1U);
     BOOST_CHECK_EQUAL(fee, GetMinFee(CTransaction(*renewal), 1000, GMF_SEND, size));
     BOOST_CHECK_LT(fee, COIN);
 
@@ -1634,6 +1662,10 @@ BOOST_FIXTURE_TEST_CASE(renewal_access_advertises_a_new_beacon_from_the_key_pool
     ForcedResearcher forced(cpid_hex);
     const grc_test::TransactionFeeGuard configured_fee(COIN / 10);
 
+    // One coin, for the reason given in renewal_pays_minimum_fee.
+    const OnlyTheseCoins only({LargestSpendableCoin()});
+    BOOST_REQUIRE(pwalletMain->GetBalance() >= COIN);
+
     const auto key_count = [] {
         std::set<CKeyID> keys;
         pwalletMain->GetKeys(keys);
@@ -1673,6 +1705,7 @@ BOOST_FIXTURE_TEST_CASE(renewal_access_advertises_a_new_beacon_from_the_key_pool
         size = entry.GetTxSize();
     }
 
+    BOOST_REQUIRE_EQUAL(advertisement->vin.size(), 1U);
     BOOST_CHECK_EQUAL(fee, GetMinFee(CTransaction(*advertisement), 1000, GMF_SEND, size));
     BOOST_CHECK_LT(fee, COIN);
 
