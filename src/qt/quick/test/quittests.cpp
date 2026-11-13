@@ -22,6 +22,9 @@
 //! quit the application. This class and QmlRootWiringTests are the only ones
 //! that run the application's event loop.
 //!
+//! qmlFrontEndOwnsNoLoginItem neither quits nor runs the loop: it checks that
+//! the QML front end does not own the OS login item.
+//!
 
 void QmlQuitTests::secondaryWindowCloseDoesNotQuit()
 {
@@ -74,4 +77,11 @@ void QmlQuitTests::quitBeforeTheLoopEndsTheLoop()
 
     QVERIFY2(!fell_back, "a quit requested before the event loop did not end it");
     QCOMPARE(rc, 0);
+}
+
+void QmlQuitTests::qmlFrontEndOwnsNoLoginItem()
+{
+    std::atomic<int> disconnects{0};
+    QmlFrontEnd fe(qml_test::FIXTURE_ROOT_URL, qml_test::CountingCallbacks(disconnects));
+    QVERIFY2(!fe.ownsLoginItem(), "the QML front end owns the login item");
 }

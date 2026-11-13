@@ -38,9 +38,9 @@
 //! \brief The GuiFrontEnd seam's teardown contract (the detach order, its
 //! idempotence, its resumption after a hook throws and the exception-path
 //! guard), the slot signatures the string-invoked core bridges in
-//! bitcoin.cpp depend on, and how DeliverCoreMessage routes a core message:
-//! blocking for a front end that does not queue, queued and logged for one
-//! that does.
+//! bitcoin.cpp depend on, which front end owns the OS login item, and how
+//! DeliverCoreMessage routes a core message: blocking for a front end that
+//! does not queue, queued and logged for one that does.
 //!
 
 namespace {
@@ -532,6 +532,13 @@ void GUIFrontEndTests::widgetsFrontEndKeepsTheOldRouting()
     QVERIFY2(plain_outcome == CoreMessageDelivery::Queued, "the Widgets path did not queue a non-modal message");
     QVERIFY2(!logged && err.find("wcap") == std::string::npos && err.find("pcap") == std::string::npos,
              "the Widgets path wrote to stderr or the GUI log");
+}
+
+void GUIFrontEndTests::loginItemOwnership()
+{
+    QVERIFY2(MakeWidgetsFrontEnd()->ownsLoginItem(), "the Widgets front end does not own the login item");
+    FakeGuiFrontEnd fake;
+    QVERIFY2(!fake.ownsLoginItem(), "a front end owns the login item by default");
 }
 
 void GUIFrontEndTests::detachGuardReapsGlobalPool()

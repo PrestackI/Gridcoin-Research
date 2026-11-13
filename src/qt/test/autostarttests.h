@@ -7,6 +7,8 @@
 
 #include <QByteArray>
 #include <QObject>
+#include <QSettings>
+#include <QString>
 #include <QTest>
 
 #include <memory>
@@ -22,13 +24,23 @@ public:
     ~AutoStartTests();
 
 private slots:
+    void initTestCase();
+    void cleanupTestCase();
     void init();
     void cleanup();
 
     void regtestCreatesNoLoginItem();
     void regtestLeavesTheMainnetLoginItemAlone();
+    void widgetsFrontEndRegeneratesTheLoginItem();
+    void nonOwningFrontEndLeavesTheLoginItemAlone();
 
 private:
+    // Suite-wide QSettings redirect (see initTestCase) and what it replaced.
+    std::unique_ptr<QTemporaryDir> m_settings_root;
+    QString m_prev_organization;
+    QString m_prev_application;
+    QSettings::Format m_prev_format{QSettings::NativeFormat};
+
     std::unique_ptr<QTemporaryDir> m_config_home;
     std::unique_ptr<QTemporaryDir> m_data_root;
     QByteArray m_saved_config_home;

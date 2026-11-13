@@ -23,6 +23,7 @@ private Q_SLOTS:
     void queuedModalMessageNeverBlocksPostingThread();
     void queuedModalMessageIsLogged();
     void widgetsFrontEndKeepsTheOldRouting();
+    void loginItemOwnership();
     void detachGuardReapsGlobalPool();
     void detachGuardReapsJobStartedByHook();
 };
