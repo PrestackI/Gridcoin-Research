@@ -1565,8 +1565,9 @@ int StartGridcoinQt(int argc, char *argv[], QApplication& app, OptionsModel& opt
 
                 GUILogPrintf("GUI loaded.");
 
-                // Regenerate startup link, to fix links to old versions
-                GUIUtil::SetStartOnSystemStartup(optionsModel.getStartAtStartup(), optionsModel.getStartMin());
+                // Regenerate startup link, to fix links to old versions. Only the front end
+                // that owns the login item does; see GuiFrontEnd::ownsLoginItem.
+                RegenerateLoginItem(frontend, optionsModel);
 
 #ifndef WIN32
                 // In the split (-multiprocess) build the GUI runs no in-process

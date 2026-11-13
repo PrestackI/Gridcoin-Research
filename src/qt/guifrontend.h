@@ -20,6 +20,7 @@ class WalletModel;
 class MRCModel;
 class ResearcherModel;
 class VotingModel;
+class OptionsModel;
 class QObject;
 
 namespace interfaces {
@@ -68,6 +69,14 @@ public:
 //! one is also written to the GUI log and to stderr. The result says which of
 //! these happened.
 CoreMessageDelivery DeliverCoreMessage(QObject* target, GuiFrontEnd* frontend, const std::string& caption, const std::string& message, bool modal);
+
+//! The start-up regeneration of the OS login item from the stored setting:
+//! GUIUtil::SetStartOnSystemStartup, which on Windows and Linux, on mainnet
+//! and testnet, removes the legacy entry and then points the item at the
+//! running binary, or removes it when the setting is off; elsewhere it does
+//! nothing. Does nothing for a front end that does not own the item. It
+//! takes the start-at-startup and start-minimized values from `options`.
+void RegenerateLoginItem(const GuiFrontEnd& frontend, OptionsModel& options);
 
 //! The seam between the GUI composition root (GuiMain / StartGridcoinQt in
 //! bitcoin.cpp: Init selection, IPC connect, OptionsModel, readiness, the model
@@ -122,6 +131,14 @@ public:
     //! the front end is registered: it reads no GUI state and returns the same
     //! value for the front end's whole life.
     virtual bool queuesModalCoreMessages() const;
+
+    //! True for the front end that owns the OS start-at-login item. There is one
+    //! item per network, shared by every GUI build, and it starts whichever
+    //! binary last wrote it; StartGridcoinQt rewrites it at start-up only for the
+    //! owner, through RegenerateLoginItem. Default false (the Widgets front end
+    //! overrides it). It reads no GUI state and returns the same value for the
+    //! front end's whole life.
+    virtual bool ownsLoginItem() const;
 
     //! Detach every model from the front end, in the order StartGridcoinQt's
     //! teardown has always used: hide the main window, then client, wallet, MRC,

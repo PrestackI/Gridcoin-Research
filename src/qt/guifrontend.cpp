@@ -6,6 +6,7 @@
 
 #include <qt/guilog.h>
 #include <qt/guiutil.h>
+#include <qt/optionsmodel.h>
 
 #include <QMetaObject>
 #include <QString>
@@ -31,6 +32,11 @@ void PostCoreMessage(QObject* target, const std::string& caption, const std::str
 GuiFrontEnd::~GuiFrontEnd() = default;
 
 bool GuiFrontEnd::queuesModalCoreMessages() const
+{
+    return false;
+}
+
+bool GuiFrontEnd::ownsLoginItem() const
 {
     return false;
 }
@@ -92,6 +98,12 @@ CoreMessageDelivery DeliverCoreMessage(QObject* target, GuiFrontEnd* frontend, c
     GUILogPrintf("%s: %s", caption, message);
     std::cerr << caption << ": " << message << std::endl;
     return CoreMessageDelivery::QueuedAndLogged;
+}
+
+void RegenerateLoginItem(const GuiFrontEnd& frontend, OptionsModel& options)
+{
+    if (!frontend.ownsLoginItem()) return;
+    GUIUtil::SetStartOnSystemStartup(options.getStartAtStartup(), options.getStartMin());
 }
 
 FrontEndDetachGuard::~FrontEndDetachGuard()

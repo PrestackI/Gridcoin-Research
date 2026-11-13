@@ -82,6 +82,11 @@ void WidgetsFrontEnd::requestQuit()
     BitcoinGUI::requestQuit();
 }
 
+bool WidgetsFrontEnd::ownsLoginItem() const
+{
+    return true;
+}
+
 void WidgetsFrontEnd::hideMain()
 {
     if (m_window) m_window->hide();
