@@ -14,8 +14,9 @@ names later changes will add.
   CTest as `gridcoin_qml_tests`.
 - With the option the build also produces `gridcoinresearch-qml` in `<build>/bin/`: the GUI
   with the QML front end (section 8). Without the option the module is not built; the default
-  build still changes in the core-message routing, the detach step and the detach guard's reap
-  of the global thread pool.
+  build still changes in the core-message routing, the detach step, the detach guard's reap of
+  the global thread pool and the start-up rewrite of the OS login item, which only the front
+  end that owns it (the Widgets one) makes.
 - On Debian 12 or later and Ubuntu 24.04 or later (Ubuntu 22.04's Qt 6.2 is below the 6.4
   floor) the module needs `qt6-declarative-dev` to build. At run time the module
   needs `qml6-module-qtquick`; the carried tree also needs `qml6-module-qtquick-controls`,
