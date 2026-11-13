@@ -56,6 +56,7 @@ class SettingsAdapter : public QObject
     Q_PROPERTY(bool enableStaking READ enableStaking WRITE setEnableStaking NOTIFY changed)
     Q_PROPERTY(bool enableStakeSplit READ enableStakeSplit WRITE setEnableStakeSplit NOTIFY changed)
     Q_PROPERTY(bool enableSideStaking READ enableSideStaking WRITE setEnableSideStaking NOTIFY changed)
+    Q_PROPERTY(bool sideStakingStored READ sideStakingStored NOTIFY changed)
     Q_PROPERTY(bool contractChangeToInput READ contractChangeToInput WRITE setContractChangeToInput NOTIFY changed)
     Q_PROPERTY(QString stakingEfficiency READ stakingEfficiency WRITE setStakingEfficiency NOTIFY changed)
     Q_PROPERTY(QString minStakeSplitValue READ minStakeSplitValue WRITE setMinStakeSplitValue NOTIFY changed)
@@ -134,6 +135,9 @@ public:
     bool enableStaking() const;
     bool enableStakeSplit() const;
     bool enableSideStaking() const;
+    //! The stored enablesidestaking, from the last seed: the node lists local
+    //! sidestakes only while it is set, whatever enableSideStaking stages.
+    bool sideStakingStored() const;
     bool contractChangeToInput() const;
     QString stakingEfficiency() const;
     QString minStakeSplitValue() const;

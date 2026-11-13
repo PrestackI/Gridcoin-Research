@@ -290,30 +290,76 @@ void QmlSettingsWiringTests::screenSaveAppliesDiscardReverts()
         QVERIFY(address1);
         QVERIFY(address1->property("readOnly").toBool());
 
-        // (h) The add row reaches the sidestake table.
+        // (l) Add and edit show only once 'Enable Sidestaking' is stored: the
+        // node lists local rows only while the stored setting is on. Ticking
+        // the box stages it and shows neither; Save shows both; unticking it
+        // again, unsaved, keeps them; saving it unticked hides them. Delete
+        // stays. The node stores no enablesidestaking here, so the box opens
+        // unticked.
+        QObject* side_staking = Find(view, "sideStakingCheckbox");
+        QObject* add = Find(view, "addSSButton");
+        QObject* save = Find(view, "settingsSaveButton");
+        QObject* discard = Find(view, "settingsDiscardButton");
+        QVERIFY(side_staking);
+        QVERIFY(add);
+        QVERIFY(save);
+        QVERIFY(discard);
+        QVERIFY(!side_staking->property("checked").toBool());
+        QVERIFY(remove->property("visible").toBool());
+        QVERIFY(!add->property("visible").toBool());
+        QVERIFY(!edit->property("visible").toBool());
+        QVERIFY(Toggle(side_staking));
+        QVERIFY(settings.enableSideStaking());
+        QVERIFY(!settings.sideStakingStored());
+        QVERIFY(!add->property("visible").toBool());
+        QVERIFY(!edit->property("visible").toBool());
+        int before = settings.seedGeneration();
+        QVERIFY(Press(save));
+        QVERIFY2(SeedAfter(settings, before), "Save posted no seed");
+        QCOMPARE(BatchesNaming(harness.node, "enablesidestaking"), 1);
+        QVERIFY(settings.sideStakingStored());
+        QVERIFY(add->property("visible").toBool());
+        QVERIFY(edit->property("visible").toBool());
+        QVERIFY(Toggle(side_staking));
+        QVERIFY(!settings.enableSideStaking());
+        QVERIFY(add->property("visible").toBool());
+        QVERIFY(edit->property("visible").toBool());
+        QVERIFY(Press(discard));
+        QVERIFY(settings.enableSideStaking());
+
+        // (h) The add row reaches the sidestake table, through the + shown
+        // while the stored setting is on.
         QObject* new_address = Find(view, "newSideStakeAddressField");
         QObject* new_allocation = Find(view, "newSideStakeAllocationField");
         QObject* new_description = Find(view, "newSideStakeDescriptionField");
-        QObject* add = Find(view, "addSSButton");
         QVERIFY(new_address);
         QVERIFY(new_allocation);
         QVERIFY(new_description);
-        QVERIFY(add);
         QVERIFY(Type(new_address, ADDRESS));
         QVERIFY(Type(new_allocation, QStringLiteral("5")));
         QVERIFY(Type(new_description, QStringLiteral("new")));
+        QVERIFY(add->property("visible").toBool());
         QVERIFY(Press(add));
         QCOMPARE(QString::fromStdString(harness.side_stakes.m_last_add_address), ADDRESS);
 
+        // (l, continued) Saving the box unticked hides add and edit again.
+        QVERIFY(Toggle(side_staking));
+        before = settings.seedGeneration();
+        QVERIFY(Press(save));
+        QVERIFY2(SeedAfter(settings, before), "Save posted no seed");
+        QCOMPARE(BatchesNaming(harness.node, "enablesidestaking"), 2);
+        QVERIFY(!settings.sideStakingStored());
+        QVERIFY(!add->property("visible").toBool());
+        QVERIFY(!edit->property("visible").toBool());
+        QVERIFY(remove->property("visible").toBool());
+
         // (k) The contract-change box is saved to the node.
         QObject* contract = Find(view, "contractChangeCheckbox");
-        QObject* contract_save = Find(view, "settingsSaveButton");
         QVERIFY(contract);
-        QVERIFY(contract_save);
         QVERIFY(!contract->property("checked").toBool());
         QVERIFY(Toggle(contract));
         const int contract_before = settings.seedGeneration();
-        QVERIFY(Press(contract_save));
+        QVERIFY(Press(save));
         QVERIFY2(SeedAfter(settings, contract_before), "Save posted no seed");
         QCOMPARE(BatchesNaming(harness.node, "contractchangetoinputaddress"), 1);
 
@@ -321,12 +367,8 @@ void QmlSettingsWiringTests::screenSaveAppliesDiscardReverts()
         // Without UPnP compiled in, the box is disabled and not driven.
         QVERIFY(SelectTab(view, "networkSettingsTabButton"));
         QObject* upnp = Find(view, "upnpCheckbox");
-        QObject* save = Find(view, "settingsSaveButton");
-        QObject* discard = Find(view, "settingsDiscardButton");
         QVERIFY(upnp);
-        QVERIFY(save);
-        QVERIFY(discard);
-        int before = settings.seedGeneration();
+        before = settings.seedGeneration();
 #ifdef USE_UPNP
         QVERIFY(upnp->property("enabled").toBool());
         QVERIFY(Toggle(upnp));
@@ -457,6 +499,8 @@ void QmlSettingsWiringTests::screenSaveAppliesDiscardReverts()
         qml_test::ModelHarness harness;
         qml_test::ScopeExit reap(ReapPool);
         harness.node.m_fail_changes = true;
+        // Stored on, so the + shows: the add below presses it as a user would.
+        harness.node.setSetting("enablesidestaking", "1");
         harness.side_stakes.m_edit_result.status = interfaces::SideStakeEditStatus::INVALID_ALLOCATION;
         g_messages.clear();
         g_previous_handler = qInstallMessageHandler(CollectMessage);
@@ -488,6 +532,7 @@ void QmlSettingsWiringTests::screenSaveAppliesDiscardReverts()
         QVERIFY(Type(new_address, ADDRESS));
         QVERIFY(Type(new_allocation, QStringLiteral("5")));
         QVERIFY(Type(new_description, QStringLiteral("new")));
+        QVERIFY(add->property("visible").toBool());
         QVERIFY(Press(add));
         QCOMPARE(side_status->property("text").toString(), AllocationText());
 

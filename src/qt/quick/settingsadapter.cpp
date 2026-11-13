@@ -335,6 +335,7 @@ bool SettingsAdapter::disableUpdateCheck() const { return staged(OptionsModel::D
 bool SettingsAdapter::enableStaking() const { return staged(OptionsModel::EnableStaking).toBool(); }
 bool SettingsAdapter::enableStakeSplit() const { return staged(OptionsModel::EnableStakeSplit).toBool(); }
 bool SettingsAdapter::enableSideStaking() const { return staged(OptionsModel::EnableSideStaking).toBool(); }
+bool SettingsAdapter::sideStakingStored() const { return m_seed[OptionsModel::EnableSideStaking].toBool(); }
 bool SettingsAdapter::contractChangeToInput() const { return staged(OptionsModel::ContractChangeToInput).toBool(); }
 QString SettingsAdapter::stakingEfficiency() const { return staged(OptionsModel::StakingEfficiency).toString(); }
 QString SettingsAdapter::minStakeSplitValue() const { return staged(OptionsModel::MinStakeSplitValue).toString(); }

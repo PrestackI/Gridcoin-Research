@@ -202,6 +202,7 @@ previous seed.
 | `marker` | property, constant | As for `Shell`. |
 | `startAtStartup`, `startAtStartupMinimized` | properties, bool | The login item and its minimised start. Never submitted while `startupOptionsAvailable` is false. Lane: none (the options model's getters). |
 | `disableUpdateCheck`, `enableStaking`, `enableStakeSplit`, `enableSideStaking`, `contractChangeToInput` | properties, bool | The node's settings of those names. Lane: serial (the seed). |
+| `sideStakingStored` | property, bool, read-only | The stored `enablesidestaking`, from the last seed, whatever `enableSideStaking` stages: the node lists local sidestakes only while it is set. Lane: serial (the seed). |
 | `stakingEfficiency`, `minStakeSplitValue` | properties, string | Whole numbers as text; checked on Apply only while `enableStakeSplit` is staged true (75 to 98, and 800 GRC up to the money supply), and otherwise put back to the seed. Lane: serial. |
 | `reserveBalance` | property, string | The reserve in the staged display unit. Staged as halfords; a text that does not parse, or a negative amount, is refused on Apply. Lane: serial. |
 | `mapPortUpnp` | property, bool | Lane: none (`OptionsModel::data`, a node read). |

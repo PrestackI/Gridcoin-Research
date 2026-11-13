@@ -461,6 +461,7 @@ Rectangle{
                 }
                 CheckBox {
                     id: sideStakingCheckbox
+                    objectName: "sideStakingCheckbox"
                     text: qsTr("Enable Sidestaking")
                     enabled: true
                     checked: Settings.enableSideStaking
@@ -644,9 +645,17 @@ Rectangle{
                         height: parent.height
                         width: parent.width
                         spacing: 0
+                        // Add and edit show only once 'Enable Sidestaking' is
+                        // saved: the node lists local rows only while the stored
+                        // setting is on, so an add made with the box ticked but
+                        // not saved would be stored and never shown. The Options
+                        // dialog stores the box as it is toggled, and
+                        // OptionsDialog::hideSideStakeEdit hides New and Edit
+                        // while it is off.
                         Button {
                             id: addSSButton
                             objectName: "addSSButton"
+                            visible: Settings.sideStakingStored
                             Layout.fillHeight: true
                             implicitWidth: 30
                             icon.source: MMPTheme.themeSelect("/icons/buttons/ic_btn_add_light.svg","/icons/buttons/ic_btn_add_dark.svg")
@@ -663,6 +672,7 @@ Rectangle{
                         }
                         Rectangle {
                             id: buttonSeparator
+                            visible: addSSButton.visible
                             color: sideStakeRect.border.color
                             width: 1
                             Layout.fillHeight: true
@@ -681,6 +691,7 @@ Rectangle{
                         }
                         Rectangle {
                             id: buttonSeparator2
+                            visible: editSSButton.visible
                             color: sideStakeRect.border.color
                             width: 1
                             Layout.fillHeight: true
@@ -688,6 +699,7 @@ Rectangle{
                         Button {
                             id: editSSButton
                             objectName: "editSSButton"
+                            visible: Settings.sideStakingStored
                             Layout.fillHeight: true
                             implicitWidth: 30
                             icon.source: MMPTheme.themeSelect("/icons/buttons/ic_btn_save_light.svg","/icons/buttons/ic_btn_save_dark.svg")
