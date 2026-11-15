@@ -272,9 +272,16 @@ void QmlOverviewWiringTests::untrustedTextIsPlain()
     qml_test::ModelHarness harness;
     qml_test::ScopeExit reap(ReapPool);
     harness.voting_manager.setCurrentPollTitle("<img src='http://127.0.0.1:1/x'>");
-    std::vector<TransactionRecord> rows(1);
+    // A receive from other shows its address, and a labelled receive with
+    // address its label; both texts are markup that must stay plain.
+    std::vector<TransactionRecord> rows(2);
+    rows[0].type = TransactionRecord::RecvFromOther;
     rows[0].address = "<b>a</b>";
     rows[0].credit = COIN;
+    rows[1].type = TransactionRecord::RecvWithAddress;
+    rows[1].label = "<b>L</b>";
+    rows[1].address = "<i>addr</i>";
+    rows[1].credit = COIN;
     harness.tx_source.setRows(GRC::VIEW_OVERVIEW, rows);
     harness.node.setWarnings("<b>w</b>");
 
@@ -306,6 +313,23 @@ void QmlOverviewWiringTests::untrustedTextIsPlain()
     QCOMPARE(polls->property("textFormat").toInt(), PLAIN_TEXT);
     QCOMPARE(address->property("textFormat").toInt(), PLAIN_TEXT);
     QCOMPARE(footer->property("textFormat").toInt(), PLAIN_TEXT);
+
+    // The labelled row shows its label and a space (the display-addresses
+    // option is off in a fresh harness), not its address.
+    QQuickItem* second = nullptr;
+    QVERIFY2(qml_test::PumpUntil(
+                 [&] {
+                     second = nullptr;
+                     QMetaObject::invokeMethod(list, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, second), Q_ARG(int, 1));
+                     return list->property("count").toInt() == 2 && second;
+                 },
+                 2s),
+             "the second delegate did not arrive");
+    QObject* labelled = second->findChild<QObject*>(QStringLiteral("addressLabel"));
+    QVERIFY(labelled);
+    QCOMPARE(Text(labelled), QStringLiteral("<b>L</b> "));
+    QVERIFY2(!Text(labelled).contains(QStringLiteral("<i>addr</i>")), qPrintable(Text(labelled)));
+    QCOMPARE(labelled->property("textFormat").toInt(), PLAIN_TEXT);
 }
 
 void QmlOverviewWiringTests::footerFollowsState()

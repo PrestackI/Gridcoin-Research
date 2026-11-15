@@ -682,7 +682,7 @@ Rectangle {
                                 amountText: model.amountText
                                 negative: model.negative
                                 icon: model.iconSource
-                                account: model.address
+                                account: model.addressText
                                 transactionDate: model.date
                             }
                             // RecentTransactionItem rows are 42 pixels high.
