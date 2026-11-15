@@ -116,14 +116,16 @@ the `VIEW_OVERVIEW` cursor.
 | `amountText` | role, string | The net amount in the display unit with the unit's name. |
 | `negative` | role, bool | The amount is below zero. |
 | `address` | role, string | The record's address, not the address-book label. |
+| `addressText` | role, string | The address column's text as the Widgets overview paints it, with the label taken from the record's snapshot (no wallet call). For a received-with-address, sent-to-address, generated, send-to-self or message record: the label followed by a space when there is one, then the address when there is no label or the display-addresses option is set. For a received-from-other or sent-to-other record: the address alone, whatever its label. For any other type (beacon, poll, vote, MRC, other): "(n/a)". A change of the display-addresses option re-reads it on every row. |
 | `date` | role, date | The transaction time. |
 | `confirmed` | role, bool | The record counts for the balance. |
 | `masked` | property, bool | The options model masks values; the list is hidden. |
 | `setVisibleRows(n)` | invokable | The list shows `n` rows: `OverviewPage::updateTransactions`' stairstep sets the served-row limit. Lane: serial (`setViewLimit`). |
 | `maskedChanged` | signal | `masked` changed. |
 
-These seven roles are the only ones: the model reads no address-book label. Its other calls
-on the transaction source run on the GUI thread (section 4).
+These eight roles are the only ones: the model makes no address-book call; `addressText`
+reads the label each record carries. Its other calls on the transaction source run on the GUI
+thread (section 4).
 
 `VotingSummary` (singleton): the overview's current poll title.
 
