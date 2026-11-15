@@ -27,6 +27,10 @@ private Q_SLOTS:
     void encryptionStatusKnownAndDedup();
     void maskEveryAmount();
     void recentTransactionsRoles();
+    void recentTransactionsAddressText();
+    void recentTransactionsDisplayAddresses();
+    void recentTransactionsLabelEdit();
+    void widgetsAddressTextStillReadsWallet();
     void researcherModeAndLimit();
     void pollTitleRefresh();
     void updateCheckLaneAndGates();

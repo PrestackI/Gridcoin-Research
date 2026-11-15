@@ -30,8 +30,9 @@ class WalletModel;
 //! list, a proxy over an OverviewTxModel (the VIEW_OVERVIEW cursor) that the
 //! adapter builds at attach and destroys at detach. It is owned by
 //! QmlProvider, which hands QML this instance through create(). It serves
-//! exactly seven roles, so QML never reaches a role that looks up an address
-//! label in the wallet.
+//! exactly eight roles, so QML never reaches a role that looks up an address
+//! label in the wallet: the address text takes its label from the record's
+//! snapshot.
 //!
 //! The OverviewTxModel calls the transaction source on the GUI thread: its
 //! constructor registers the view and reads the first rows, a newer Reset
@@ -54,6 +55,7 @@ public:
         AddressRole,
         DateRole,
         ConfirmedRole,
+        AddressTextRole,
     };
 
     //! `marker` identifies the provider that owns this instance.
@@ -65,9 +67,9 @@ public:
     static RecentTransactions* create(QQmlEngine* qml_engine, QJSEngine* js_engine);
 
     //! Builds the OverviewTxModel over `wallet`'s transaction source and serves
-    //! it; follows the options model's mask state and unit (a null `options`
-    //! means unmasked in GRC). The models and the runner must outlive the
-    //! matching detach().
+    //! it; follows the options model's mask state, unit and display-addresses
+    //! option (a null `options` means unmasked in GRC). The models and the
+    //! runner must outlive the matching detach().
     void attach(WalletModel& wallet, OptionsModel* options, QmlCallRunner& runner);
     //! Stops serving and destroys the OverviewTxModel, so its destructor
     //! unregisters the view while the transaction source is alive. A detach()
@@ -91,6 +93,9 @@ signals:
 private:
     void onMaskValuesChanged(bool masked);
     void onDisplayUnitChanged(int unit);
+    //! Re-reads the address text of every row when the changed options rows
+    //! include the display-addresses option, which has no signal of its own.
+    void onOptionsDataChanged(const QModelIndex& top_left, const QModelIndex& bottom_right);
     void postLimit();
     void deliverLimit(uint64_t epoch);
 

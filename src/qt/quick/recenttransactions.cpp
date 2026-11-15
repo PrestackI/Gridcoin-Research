@@ -104,6 +104,8 @@ void RecentTransactions::attach(WalletModel& wallet, OptionsModel* options, QmlC
             connect(options, &OptionsModel::MaskValuesChanged, this, &RecentTransactions::onMaskValuesChanged));
         m_connections.push_back(
             connect(options, &OptionsModel::displayUnitChanged, this, &RecentTransactions::onDisplayUnitChanged));
+        m_connections.push_back(
+            connect(options, &OptionsModel::dataChanged, this, &RecentTransactions::onOptionsDataChanged));
         m_unit = options->getDisplayUnit();
         onMaskValuesChanged(options->getMaskValues());
     }
@@ -165,6 +167,10 @@ QVariant RecentTransactions::data(const QModelIndex& index, int role) const
         return source.data(TransactionTableModel::DateRole);
     case ConfirmedRole:
         return source.data(TransactionTableModel::ConfirmedRole);
+    case AddressTextRole:
+        // Widgets' overview text, with the label from the record's snapshot:
+        // no wallet call per row.
+        return source.data(TransactionTableModel::RecordAddressTextRole);
     }
     return QVariant();
 }
@@ -181,6 +187,7 @@ QHash<int, QByteArray> RecentTransactions::roleNames() const
         {AddressRole, QByteArrayLiteral("address")},
         {DateRole, QByteArrayLiteral("date")},
         {ConfirmedRole, QByteArrayLiteral("confirmed")},
+        {AddressTextRole, QByteArrayLiteral("addressText")},
     };
 }
 
@@ -196,6 +203,14 @@ void RecentTransactions::onDisplayUnitChanged(int unit)
     m_unit = unit;
     const int rows = rowCount();
     if (rows > 0) emit dataChanged(index(0, 0), index(rows - 1, 0), {AmountTextRole});
+}
+
+void RecentTransactions::onOptionsDataChanged(const QModelIndex& top_left, const QModelIndex& bottom_right)
+{
+    const int option = OptionsModel::DisplayAddresses;
+    if (top_left.row() > option || bottom_right.row() < option) return;
+    const int rows = rowCount();
+    if (rows > 0) emit dataChanged(index(0, 0), index(rows - 1, 0), {AddressTextRole});
 }
 
 void RecentTransactions::postLimit()

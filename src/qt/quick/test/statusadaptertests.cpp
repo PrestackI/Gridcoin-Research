@@ -24,6 +24,7 @@
 #include <qt/quick/researchersummary.h>
 #include <qt/quick/votingsummary.h>
 #include <qt/quick/walletsummary.h>
+#include <qt/transactiontablemodel.h>
 #include <qt/walletmodel.h>
 #include <util.h>
 
@@ -93,6 +94,43 @@ int64_t Now()
 void ReapPool()
 {
     QThreadPool::globalInstance()->waitForDone();
+}
+
+//! A record of `type` for `address`, with `label` as its address-book label
+//! snapshot and one coin received.
+TransactionRecord AddressTextRecord(TransactionRecord::Type type, const std::string& label,
+                                    const std::string& address)
+{
+    TransactionRecord record;
+    record.type = type;
+    record.label = label;
+    record.address = address;
+    record.credit = COIN;
+    return record;
+}
+
+//! One row per kind of address text, in this order: a labelled and an
+//! unlabelled receive with address, a send to address whose label is markup,
+//! a labelled receive from other, a labelled generated row, a labelled poll
+//! and an unlabelled beacon advertisement.
+std::vector<TransactionRecord> AddressTextRows()
+{
+    return {
+        AddressTextRecord(TransactionRecord::RecvWithAddress, "Alice", "addrA"),
+        AddressTextRecord(TransactionRecord::RecvWithAddress, "", "addrB"),
+        AddressTextRecord(TransactionRecord::SendToAddress, "<b>Bob</b>", "addrC"),
+        AddressTextRecord(TransactionRecord::RecvFromOther, "Dave", "addrD"),
+        AddressTextRecord(TransactionRecord::Generated, "Erin", "addrE"),
+        AddressTextRecord(TransactionRecord::Poll, "Frank", "addrF"),
+        AddressTextRecord(TransactionRecord::BeaconAdvertisement, "", "addrG"),
+    };
+}
+
+//! The role `recent` serves under `name`, or -1. Looked up by name, so a case
+//! compiles whether or not the role exists.
+int RoleNamed(const RecentTransactions& recent, const char* name)
+{
+    return recent.roleNames().key(QByteArray(name), -1);
 }
 
 } // namespace
@@ -787,13 +825,13 @@ void QmlStatusAdapterTests::recentTransactionsRoles()
     recent.attach(harness.wallet_model, &harness.options, runner);
     QCOMPARE(recent.rowCount(), static_cast<int>(expected.size()));
 
-    // Exactly the seven names.
+    // Exactly the eight names.
     QStringList names;
     for (const QByteArray& name : recent.roleNames()) names << QString::fromLatin1(name);
     names.sort();
-    QCOMPARE(names, (QStringList{QStringLiteral("address"), QStringLiteral("amount"), QStringLiteral("amountText"),
-                                 QStringLiteral("confirmed"), QStringLiteral("date"), QStringLiteral("iconSource"),
-                                 QStringLiteral("negative")}));
+    QCOMPARE(names, (QStringList{QStringLiteral("address"), QStringLiteral("addressText"), QStringLiteral("amount"),
+                                 QStringLiteral("amountText"), QStringLiteral("confirmed"), QStringLiteral("date"),
+                                 QStringLiteral("iconSource"), QStringLiteral("negative")}));
 
     for (int row = 0; row < recent.rowCount(); ++row) {
         const QModelIndex index = recent.index(row, 0);
@@ -837,6 +875,182 @@ void QmlStatusAdapterTests::recentTransactionsRoles()
     latch.open = true;
     QVERIFY(SettleSerial(runner));
     QCOMPARE(harness.tx_source.viewLimits(), (std::vector<int>{90, 120}));
+}
+
+void QmlStatusAdapterTests::recentTransactionsAddressText()
+{
+    qml_test::ModelHarness harness;
+    const std::vector<TransactionRecord> rows = AddressTextRows();
+    harness.tx_source.setRows(GRC::VIEW_OVERVIEW, rows);
+
+    QmlCallRunner runner(TestPolicy());
+    RecentTransactions recent(1);
+    qml_test::ScopeExit detach([&] {
+        runner.drain();
+        recent.detach();
+    });
+    recent.attach(harness.wallet_model, &harness.options, runner);
+    QCOMPARE(recent.rowCount(), static_cast<int>(rows.size()));
+    QVERIFY(!harness.options.getDisplayAddresses());
+    const int role = RoleNamed(recent, "addressText");
+    QVERIFY(role != -1);
+
+    // Every served role of every row, read: none looks up an address-book
+    // label.
+    QStringList texts;
+    for (int row = 0; row < recent.rowCount(); ++row) {
+        const QModelIndex index = recent.index(row, 0);
+        for (const int served : recent.roleNames().keys()) (void)recent.data(index, served);
+        texts << recent.data(index, role).toString();
+    }
+    QCOMPARE(harness.wallet().m_address_label_calls.load(), 0);
+
+    // Widgets' overview text with the option off: the label and a space; the
+    // address alone with no label, and for a receive from other whatever its
+    // label; "(n/a)" for a type with no address text.
+    const QString none = TransactionTableModel::tr("(n/a)");
+    QCOMPARE(texts, (QStringList{QStringLiteral("Alice "), QStringLiteral("addrB"), QStringLiteral("<b>Bob</b> "),
+                                 QStringLiteral("addrD"), QStringLiteral("Erin "), none, none}));
+    // The address role still serves the raw address.
+    QCOMPARE(recent.data(recent.index(0, 0), RecentTransactions::AddressRole).toString(), QStringLiteral("addrA"));
+}
+
+void QmlStatusAdapterTests::recentTransactionsDisplayAddresses()
+{
+    qml_test::ModelHarness harness;
+    const std::vector<TransactionRecord> rows = AddressTextRows();
+    const int last = static_cast<int>(rows.size()) - 1;
+    harness.tx_source.setRows(GRC::VIEW_OVERVIEW, rows);
+
+    QmlCallRunner runner(TestPolicy());
+    RecentTransactions recent(1);
+    qml_test::ScopeExit detach([&] {
+        runner.drain();
+        recent.detach();
+    });
+    recent.attach(harness.wallet_model, &harness.options, runner);
+    const int role = RoleNamed(recent, "addressText");
+    QVERIFY(role != -1);
+    QCOMPARE(recent.data(recent.index(0, 0), role).toString(), QStringLiteral("Alice "));
+
+    const QModelIndex option = harness.options.index(OptionsModel::DisplayAddresses);
+    QSignalSpy changed(&recent, &QAbstractItemModel::dataChanged);
+
+    // The option on: one dataChanged over every row, for the address text
+    // alone, and the labelled row now ends in its address.
+    harness.options.setData(option, true, Qt::EditRole);
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(changed.at(0).at(0).toModelIndex(), recent.index(0, 0));
+    QCOMPARE(changed.at(0).at(1).toModelIndex(), recent.index(last, 0));
+    QCOMPARE(changed.at(0).at(2).value<QList<int>>(), QList<int>{role});
+    QCOMPARE(recent.data(recent.index(0, 0), role).toString(), QStringLiteral("Alice addrA"));
+
+    // Off again: the same emission, and the label alone.
+    changed.clear();
+    harness.options.setData(option, false, Qt::EditRole);
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(changed.at(0).at(0).toModelIndex(), recent.index(0, 0));
+    QCOMPARE(changed.at(0).at(1).toModelIndex(), recent.index(last, 0));
+    QCOMPARE(changed.at(0).at(2).value<QList<int>>(), QList<int>{role});
+    QCOMPARE(recent.data(recent.index(0, 0), role).toString(), QStringLiteral("Alice "));
+
+    // An options row after the display-addresses one (coin control) emits
+    // nothing.
+    changed.clear();
+    harness.options.setData(harness.options.index(OptionsModel::CoinControlFeatures), true, Qt::EditRole);
+    QCOMPARE(changed.count(), 0);
+
+    // A range of options rows that spans the display-addresses one (from
+    // the display unit to the language) emits once, like a change of that
+    // row alone.
+    changed.clear();
+    emit harness.options.dataChanged(harness.options.index(OptionsModel::DisplayUnit),
+                                     harness.options.index(OptionsModel::Language));
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(changed.at(0).at(0).toModelIndex(), recent.index(0, 0));
+    QCOMPARE(changed.at(0).at(1).toModelIndex(), recent.index(last, 0));
+    QCOMPARE(changed.at(0).at(2).value<QList<int>>(), QList<int>{role});
+    QCOMPARE(recent.data(recent.index(0, 0), role).toString(), QStringLiteral("Alice "));
+
+    // A detach drops the connection: after a second attach one change emits
+    // once.
+    runner.drain();
+    recent.detach();
+    recent.attach(harness.wallet_model, &harness.options, runner);
+    changed.clear();
+    harness.options.setData(option, true, Qt::EditRole);
+    QCOMPARE(changed.count(), 1);
+
+    // With no rows, a change emits nothing.
+    runner.drain();
+    recent.detach();
+    harness.tx_source.setRows(GRC::VIEW_OVERVIEW, {});
+    recent.attach(harness.wallet_model, &harness.options, runner);
+    QCOMPARE(recent.rowCount(), 0);
+    changed.clear();
+    harness.options.setData(option, false, Qt::EditRole);
+    QCOMPARE(changed.count(), 0);
+}
+
+void QmlStatusAdapterTests::recentTransactionsLabelEdit()
+{
+    qml_test::ModelHarness harness;
+    const std::vector<TransactionRecord> rows = AddressTextRows();
+    harness.tx_source.setRows(GRC::VIEW_OVERVIEW, rows);
+
+    QmlCallRunner runner(TestPolicy());
+    RecentTransactions recent(1);
+    qml_test::ScopeExit detach([&] {
+        runner.drain();
+        recent.detach();
+    });
+    recent.attach(harness.wallet_model, &harness.options, runner);
+    const int role = RoleNamed(recent, "addressText");
+    QVERIFY(role != -1);
+    const int row = 0;
+    QCOMPARE(recent.data(recent.index(row, 0), role).toString(), QStringLiteral("Alice "));
+
+    // The store's change event for the row after an address-book edit: the
+    // record with its new label. The seed's high-water mark is 0, so the
+    // event's seqno 1 is applied.
+    TransactionRecord edited = rows[row];
+    edited.label = "Carol";
+    QSignalSpy changed(&recent, &QAbstractItemModel::dataChanged);
+    std::vector<GRC::WalletEvent> events;
+    events.push_back(GRC::WalletEvent{1, 0, GRC::RowsChangedPayload{GRC::VIEW_OVERVIEW, 0, row, 1, {edited}}});
+    emit harness.wallet_model.walletEventsDrained(events);
+
+    QCOMPARE(changed.count(), 1);
+    QVERIFY(changed.at(0).at(0).toModelIndex().row() <= row);
+    QVERIFY(changed.at(0).at(1).toModelIndex().row() >= row);
+    QCOMPARE(recent.data(recent.index(row, 0), role).toString(), QStringLiteral("Carol "));
+    QCOMPARE(harness.wallet().m_address_label_calls.load(), 0);
+}
+
+void QmlStatusAdapterTests::widgetsAddressTextStillReadsWallet()
+{
+    qml_test::ModelHarness harness;
+    harness.tx_source.setRows(GRC::VIEW_OVERVIEW,
+                              {AddressTextRecord(TransactionRecord::RecvWithAddress, "Snap", "addrS")});
+
+    QmlCallRunner runner(TestPolicy());
+    RecentTransactions recent(1);
+    qml_test::ScopeExit detach([&] {
+        runner.drain();
+        recent.detach();
+    });
+    recent.attach(harness.wallet_model, &harness.options, runner);
+    QAbstractItemModel* source = recent.sourceModel();
+    QVERIFY(source);
+    QCOMPARE(source->rowCount(), 1);
+
+    // The overview model's display text, which the Widgets overview paints,
+    // still takes its label from the wallet (the fake has none), one call per
+    // read, and not from the record's snapshot.
+    const int before = harness.wallet().m_address_label_calls.load();
+    const QString text = source->data(source->index(0, 0), Qt::DisplayRole).toString();
+    QCOMPARE(text, QStringLiteral("addrS"));
+    QCOMPARE(harness.wallet().m_address_label_calls.load(), before + 1);
 }
 
 void QmlStatusAdapterTests::researcherModeAndLimit()
