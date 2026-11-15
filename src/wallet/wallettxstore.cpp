@@ -899,6 +899,8 @@ void WalletTxStore::applyAddressBookChange(const std::string& address, const std
     // same-address keys first would leave several rows mis-keyed in their old slots
     // (transiently unsorted) and break lower_bound under an Address sort. Positions
     // in m_records are stable (the label is not part of RecordOrder). (PR4-fix C.)
+    // The re-snapshotted label also feeds the QML overview's address text
+    // (TransactionTableModel::RecordAddressTextRole).
     for (std::size_t i = 0; i < m_records.size(); ++i) {
         if (m_records[i].address != address) {
             continue;

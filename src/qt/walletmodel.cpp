@@ -357,7 +357,9 @@ void WalletModel::updateAddressBook(const QString &address, const QString &label
     // got from reading LabelRole on every filter pass (windowed-model PR4-C). Use
     // the authoritative current label (empty after a delete) rather than the raw
     // notification argument. The enqueue is O(1); the store-worker re-snapshots and
-    // re-drives the cursors off the GUI thread.
+    // re-drives the cursors off the GUI thread. The re-snapshotted label also
+    // feeds the QML overview's address text
+    // (TransactionTableModel::RecordAddressTextRole).
     const QString current = addressTableModel
         ? addressTableModel->labelForAddress(address) : label;
     txSource().noteAddressBookChanged(address.toStdString(), current.toStdString());

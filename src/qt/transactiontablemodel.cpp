@@ -148,12 +148,16 @@ QString TransactionTableModel::formatTxDate(const TransactionRecord *wtx) const
     }
 }
 
-/* Look up address in address book, if found return label (address)
-   otherwise just return (address)
+/* Return the label followed by a space when there is one, then the address
+   when there is no label, the display-addresses option is set or this is a
+   tooltip. The label is *record_label when one is given (a record's
+   snapshot), otherwise the address book's.
  */
-QString TransactionTableModel::lookupAddress(const std::string &address, bool tooltip) const
+QString TransactionTableModel::lookupAddress(const std::string &address, bool tooltip, const std::string *record_label) const
 {
-    QString label = walletModel->getAddressTableModel()->labelForAddress(QString::fromStdString(address));
+    QString label = record_label
+        ? QString::fromStdString(*record_label)
+        : walletModel->getAddressTableModel()->labelForAddress(QString::fromStdString(address));
     QString description;
     if(!label.isEmpty())
     {
@@ -278,8 +282,10 @@ QVariant TransactionTableModel::txAddressDecoration(const TransactionRecord *wtx
     return QVariant();
 }
 
-QString TransactionTableModel::formatTxToAddress(const TransactionRecord *wtx, bool tooltip) const
+QString TransactionTableModel::formatTxToAddress(const TransactionRecord *wtx, bool tooltip, bool record_label) const
 {
+    // With record_label the label is the record's snapshot, not the address book's.
+    const std::string *label = record_label ? &wtx->label : nullptr;
     switch(wtx->type)
     {
     case TransactionRecord::RecvFromOther:
@@ -288,10 +294,10 @@ QString TransactionTableModel::formatTxToAddress(const TransactionRecord *wtx, b
    case TransactionRecord::RecvWithAddress:
     case TransactionRecord::SendToAddress:
     case TransactionRecord::Generated:
-        return lookupAddress(wtx->address, tooltip);
+        return lookupAddress(wtx->address, tooltip, label);
     case TransactionRecord::SendToSelf:
     case TransactionRecord::Message:
-        return lookupAddress(wtx->address, tooltip);
+        return lookupAddress(wtx->address, tooltip, label);
     default:
         return tr("(n/a)");
     }
@@ -556,6 +562,8 @@ QVariant TransactionTableModel::formatRole(const TransactionRecord *rec, int col
         return rec->status.status;
     case GeneratedTypeRole:
         return static_cast<int>(rec->status.generated_type);
+    case RecordAddressTextRole:
+        return formatTxToAddress(rec, false, true);
     }
     return QVariant();
 }

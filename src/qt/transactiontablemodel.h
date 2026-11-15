@@ -62,7 +62,10 @@ public:
         /** Transaction status (TransactionRecord::Status) */
         StatusRole,
         /** Mined type of a generated record (GRC::MinedType, as int) */
-        GeneratedTypeRole
+        GeneratedTypeRole,
+        /** The ToAddress column's display text, with the label taken from the
+            record's snapshot instead of the address book */
+        RecordAddressTextRole
     };
 
     //! Render \p role for \p rec at \p column (a ColumnIndex). The windowed
@@ -80,12 +83,12 @@ private:
     WalletModel *walletModel;
     QStringList columns;
 
-    QString lookupAddress(const std::string &address, bool tooltip) const;
+    QString lookupAddress(const std::string &address, bool tooltip, const std::string *record_label = nullptr) const;
     QVariant addressColor(const TransactionRecord *wtx) const;
     QString formatTxStatus(const TransactionRecord *wtx) const;
     QString formatTxDate(const TransactionRecord *wtx) const;
     QString formatTxType(const TransactionRecord *wtx) const;
-    QString formatTxToAddress(const TransactionRecord *wtx, bool tooltip) const;
+    QString formatTxToAddress(const TransactionRecord *wtx, bool tooltip, bool record_label = false) const;
     QString formatTxAmount(const TransactionRecord *wtx, bool showUnconfirmed=true) const;
     QString formatTooltip(const TransactionRecord *rec) const;
     QString formatTxTypeExplanation(const TransactionRecord *rec) const;

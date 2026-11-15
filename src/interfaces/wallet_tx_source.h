@@ -96,7 +96,9 @@ public:
     //! GUI up-channel: an address-book entry changed; re-snapshot the label on
     //! the stored records for \p address and re-drive the cursors (the label
     //! is the Address-column sort key and a filter target). \p label is the
-    //! authoritative current label ("" after a delete). O(1) enqueue.
+    //! authoritative current label ("" after a delete). O(1) enqueue. The
+    //! re-snapshotted label also feeds the QML overview's address text
+    //! (TransactionTableModel::RecordAddressTextRole).
     virtual void noteAddressBookChanged(const std::string& address,
                                         const std::string& label) = 0;
 };
