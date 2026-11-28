@@ -70,6 +70,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
+          ./contrib/devtools/ci-drop-unused-apt-sources.sh
           source ./install_dependencies.sh
           install_deps native true true
 
@@ -253,6 +254,7 @@ jobs:
 
       - name: Add ARMhf Architecture
         run: |
+          ./contrib/devtools/ci-drop-unused-apt-sources.sh
           sudo dpkg --add-architecture armhf
           # Take phased updates. While an Ubuntu update is phasing, apt keeps the
           # installed amd64 copy of a package back but can pick the new version

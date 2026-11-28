@@ -116,6 +116,7 @@ jobs:
 
       - name: Build + Test (multiprocess)
         run: |
+          ./contrib/devtools/ci-drop-unused-apt-sources.sh
           chmod +x install_dependencies.sh build_targets.sh contrib/devtools/check-build-warnings.sh
           ./build_targets.sh \
             TARGET=native \
@@ -179,6 +180,7 @@ jobs:
       # cmake_production.yml still runs the full test suite under Wine.
       - name: Build + Test (multiprocess)
         run: |
+          ./contrib/devtools/ci-drop-unused-apt-sources.sh
           chmod +x install_dependencies.sh build_targets.sh contrib/devtools/check-build-warnings.sh
           ./build_targets.sh \
             TARGET=${{ matrix.target }} \
@@ -227,6 +229,7 @@ jobs:
 
       - name: Add ARMhf Architecture
         run: |
+          ./contrib/devtools/ci-drop-unused-apt-sources.sh
           sudo dpkg --add-architecture armhf
           # Take phased updates. While an Ubuntu update is phasing, apt keeps the
           # installed amd64 copy of a package back but can pick the new version

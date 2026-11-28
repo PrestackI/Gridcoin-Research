@@ -75,6 +75,7 @@ jobs:
 
       - name: Install System Deps
         run: |
+          ./contrib/devtools/ci-drop-unused-apt-sources.sh
           sudo apt-get update
           sudo apt-get install -y clang cmake build-essential libboost-all-dev \
             libssl-dev libdb++-dev libminiupnpc-dev libqrencode-dev \
@@ -265,6 +266,7 @@ jobs:
 
       - name: Install System Deps
         run: |
+          ./contrib/devtools/ci-drop-unused-apt-sources.sh
           sudo apt-get update
           sudo apt-get install -y clang cmake build-essential libboost-all-dev \
             libssl-dev libdb++-dev libminiupnpc-dev libqrencode-dev \
@@ -347,6 +349,7 @@ jobs:
 
       - name: Install System Deps
         run: |
+          ./contrib/devtools/ci-drop-unused-apt-sources.sh
           sudo apt-get update
           sudo apt-get install -y clang cmake build-essential libboost-all-dev \
             libssl-dev libdb++-dev libminiupnpc-dev libqrencode-dev \
@@ -426,6 +429,7 @@ jobs:
 
       - name: Install Lint Dependencies
         run: |
+          ./contrib/devtools/ci-drop-unused-apt-sources.sh
           sudo apt-get update
           # Install ClangFormat and Shellcheck
           # Ubuntu 24.04 has sufficiently new versions, removing need for manual download
@@ -506,6 +510,7 @@ jobs:
 
       - name: Install System Deps
         run: |
+          ./contrib/devtools/ci-drop-unused-apt-sources.sh
           sudo apt-get update
           sudo apt-get install -y clang cmake build-essential libboost-all-dev \
             libssl-dev libdb++-dev libminiupnpc-dev libqrencode-dev \
@@ -573,6 +578,7 @@ jobs:
 
       - name: Install System Deps
         run: |
+          ./contrib/devtools/ci-drop-unused-apt-sources.sh
           sudo apt-get update
           sudo apt-get install -y clang cmake build-essential libboost-all-dev \
             libssl-dev libdb++-dev libminiupnpc-dev libqrencode-dev \

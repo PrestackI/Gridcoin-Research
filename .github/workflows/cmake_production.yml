@@ -157,6 +157,7 @@ jobs:
       # 1. Install Host Tools
       - name: Install System Dependencies
         run: |
+          ./contrib/devtools/ci-drop-unused-apt-sources.sh
           source ./install_dependencies.sh
           install_deps all false false
 
@@ -1466,6 +1467,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
+          ./contrib/devtools/ci-drop-unused-apt-sources.sh
           source ./install_dependencies.sh
           # 4th arg: system Cap'n Proto, for the multiprocess build below.
           install_deps native true true true
@@ -1678,6 +1680,7 @@ jobs:
 
       - name: Install Flatpak and flatpak-builder
         run: |
+          ./contrib/devtools/ci-drop-unused-apt-sources.sh
           sudo apt-get update
           sudo apt-get install -y flatpak flatpak-builder
 

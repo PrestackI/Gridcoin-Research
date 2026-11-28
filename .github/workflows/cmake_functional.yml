@@ -72,6 +72,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
+          ./contrib/devtools/ci-drop-unused-apt-sources.sh
           source ./install_dependencies.sh
           # WITH_GUI=false: this is a daemon-only (-DENABLE_GUI=OFF) build, so skip
           # the Qt/GUI dependency set.
